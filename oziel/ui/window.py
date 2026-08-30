@@ -9,7 +9,7 @@ from pathlib import Path
 import webview
 
 from oziel import config
-from oziel.audio import play_wav
+from oziel.audio import play_wav, record_until_silence
 from oziel.providers.mistral import MistralProvider
 
 APP_HTML = Path(__file__).parent / "app.html"
@@ -104,6 +104,53 @@ class Api:
         config.save(self.cfg)
         return {"ok": True}
 
+    def record_and_transcribe(self, max_seconds: float = 10) -> dict:
+        if not self.provider:
+            return {"ok": False, "error": "No API key yet."}
+        try:
+            wav = record_until_silence(max_seconds=max_seconds)
+            text = self.provider.stt(wav)
+            self._spend()
+            return {"ok": True, "text": text.strip()}
+        except Exception as e:
+            return {"ok": False, "error": f"Mic/STT problem: {e}"}
+
+    def save_phrase(self, phrase: str) -> dict:
+        phrase = (phrase or "").strip()
+        if not phrase:
+            return {"ok": False, "error": "Empty phrase."}
+        self.cfg["confirm_phrase"] = phrase
+        config.save(self.cfg)
+        return {"ok": True}
+
+    def chat_reply(self, user_text: str) -> dict:
+        if not self.provider:
+            return {"ok": False, "error": "No API key yet."}
+        name = self.cfg.get("user_name") or "there"
+        style = (
+            "one short sentence"
+            if self.cfg["verbosity"] == "brief"
+            else "two or three warm sentences"
+        )
+        system = (
+            f"You are Oziel, a voice assistant living on the Windows laptop of {name}. "
+            f"Your reply is spoken aloud: {style}, plain text, no markdown or lists. "
+            "You cannot take actions yet — your hands arrive in a coming build; "
+            "be honest and lighthearted about that if asked to do something."
+        )
+        try:
+            text = self.provider.chat(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_text},
+                ],
+                max_tokens=120,
+            )
+            self._spend()
+            return {"ok": True, "text": text.strip()}
+        except Exception as e:
+            return {"ok": False, "error": f"Brain problem: {e}"}
+
     def save_name(self, name: str) -> dict:
         name = (name or "").strip()
         if not name:
@@ -118,7 +165,7 @@ class Api:
         name = self.cfg.get("user_name") or ""
         self.speak(
             f"Setup complete{', ' + name if name else ''}. "
-            "My ears arrive in the next build. I can't wait to get to work."
+            "I'm all ears — tap the mic anytime. My wake word comes soon."
         )
         return {"ok": True}
 

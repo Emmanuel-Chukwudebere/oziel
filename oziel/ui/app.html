@@ -121,7 +121,7 @@
   <div class="chips" id="chips" hidden>
     <div class="chip" data-s="key"></div><div class="chip" data-s="hear"></div>
     <div class="chip" data-s="name"></div><div class="chip" data-s="voice"></div>
-    <div class="chip" data-s="done"></div>
+    <div class="chip" data-s="phrase"></div><div class="chip" data-s="done"></div>
   </div>
 </div>
 
@@ -139,7 +139,7 @@
   <div class="row"><label>Voice</label><div class="cards" id="setVoice"></div></div>
   <div class="row"><label>Replies</label><div class="cards" id="setVerbosity"></div></div>
   <div class="row"><label>Go-phrase</label>
-    <button class="card" disabled>Recorded by voice — arrives with my ears (next build)</button>
+    <button class="card" id="rerecordPhrase">🎙 Re-record go-phrase</button>
   </div>
   <div class="row"><label>Start over</label>
     <button class="card" id="resetSetup">Reset setup — relive the first run</button>
@@ -175,7 +175,7 @@ function cards(list) {          // [[label, onclick, primary, sub], ...]
 }
 function chip(step) {
   $("chips").hidden = false;
-  const order = ["key", "hear", "name", "voice", "done"];
+  const order = ["key", "hear", "name", "voice", "phrase", "done"];
   document.querySelectorAll(".chip").forEach(c =>
     c.classList.toggle("on", order.indexOf(c.dataset.s) <= order.indexOf(step)));
 }
@@ -257,7 +257,7 @@ function stepVoice() {
       await speakUI(null_or_sample(slug), slug);
       btn.disabled = false;
       cards([[`Use ${name}`, async () => {
-        await api().choose_voice(slug); stepDone();
+        await api().choose_voice(slug); stepPhrase(() => stepDone());
       }, true], ["← Hear the others", () => stepVoice()]]);
     },
     false, sub,
@@ -270,9 +270,62 @@ function null_or_sample(slug) {
     en_paul_happy: "This is my happy voice. Every errand is a pleasure!",
   }[slug];
 }
+/* ---------- listening + go-phrase ---------- */
+function norm(t) {
+  return (t || "").toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
+}
+async function listen(maxs) {
+  orb("listening"); status("LISTENING");
+  const r = await api().record_and_transcribe(maxs || 10);
+  orb("idle"); status("IDLE");
+  return r;
+}
+function stepPhrase(onDone) {
+  chip("phrase"); status("SETUP — YOUR GO-PHRASE");
+  caption("Risky actions — deleting, sending, paying — wait for a phrase only you know.<br>Think of one you'd never say by accident, then tap and say it.");
+  cards([
+    ["🎙 Record my phrase", () => capturePhrase(onDone), true],
+    ["Skip for now", async () => {
+      await speakUI("Skipping. Risky actions stay locked until we set it.");
+      onDone();
+    }],
+  ]);
+}
+async function capturePhrase(onDone) {
+  cards([]); caption("Say your phrase…");
+  const r = await listen(12);
+  if (!r.ok || !r.text) {
+    caption(r.error || "I didn't hear anything.", true);
+    return stepPhrase(onDone);
+  }
+  const phrase = r.text.trim();
+  await speakUI(`I heard: ${phrase}. Did I get it right?`);
+  cards([
+    ["Yes — that's it", () => verifyPhrase(phrase, 1, onDone), true],
+    ["No — try again", () => capturePhrase(onDone)],
+  ]);
+}
+async function verifyPhrase(phrase, round, onDone) {
+  cards([]);
+  caption(`Reliability check ${round} of 2 — say it again.`);
+  await speakUI(round === 1 ? "Say it once more." : "And one last time.");
+  const r = await listen(12);
+  if (!r.ok || norm(r.text) !== norm(phrase)) {
+    caption(`I heard “${(r.text || "—").trim()}” — that didn't match.`, true);
+    return cards([
+      ["Run the check again", () => verifyPhrase(phrase, round, onDone), true],
+      ["Pick a different phrase", () => capturePhrase(onDone)],
+    ]);
+  }
+  if (round < 2) return verifyPhrase(phrase, round + 1, onDone);
+  await api().save_phrase(phrase);
+  await speakUI("Locked in. That phrase stays between us.");
+  onDone();
+}
+
 async function stepDone() {
   chip("done"); status("FINISHING");
-  caption("That's everything for today.<br>My ears — and your go-phrase — arrive in the next build.");
+  caption("That's everything.");
   cards([]);
   orb("speaking");
   await api().complete_setup();
@@ -280,18 +333,38 @@ async function stepDone() {
 }
 
 /* ---------- home ---------- */
-async function home() {
-  $("chips").hidden = true;
-  const s = await api().get_state();
-  orb("idle"); status("RESTING — EARS ARRIVE NEXT BUILD");
-  caption("I'm set up. The voice loop is the next milestone.");
-  cards([["Say hello", async () => {
-    await speakUI(`Hello${s.user_name ? " " + s.user_name : ""}. Still here. Still ready.`);
-    status("RESTING — EARS ARRIVE NEXT BUILD");
-  }, true]]);
+async function refreshMeter(s) {
+  s = s || await api().get_state();
   $("meter").hidden = false;
   $("meterText").textContent = `credits $${s.usage_usd.toFixed(2)} / $10.00`;
   $("meterFill").style.width = Math.min(100, s.usage_usd * 10) + "%";
+}
+async function home() {
+  $("chips").hidden = true;
+  const s = await api().get_state();
+  orb("idle"); status("READY — TAP THE MIC");
+  caption("Tap the mic and talk to me.<br><small style='color:var(--dim)'>Wake word and hands are on the way.</small>");
+  cards([["🎙 Talk to me", () => talk(), true]]);
+  refreshMeter(s);
+}
+async function talk() {
+  const r = await listen(12);
+  if (!r.ok || !r.text) {
+    caption(r.error || "I didn't catch that.", true);
+    status("READY — TAP THE MIC");
+    return;
+  }
+  caption(`<small style="color:var(--dim)">you</small> ${r.text}`);
+  orb("speaking"); status("THINKING");
+  const reply = await api().chat_reply(r.text);
+  if (!reply.ok) {
+    caption(reply.error, true); orb("idle"); status("READY — TAP THE MIC");
+    return;
+  }
+  caption(`<small style="color:var(--dim)">you</small> ${r.text}<br><small style="color:var(--accent)">oziel</small> ${reply.text}`);
+  await speakUI(reply.text);
+  status("READY — TAP THE MIC");
+  refreshMeter();
 }
 
 /* ---------- settings ---------- */
@@ -319,6 +392,10 @@ $("closeSettings").onclick = () => $("settings").classList.remove("open");
 $("resetSetup").onclick = async () => {
   await api().reset_setup();
   location.reload();
+};
+$("rerecordPhrase").onclick = () => {
+  $("settings").classList.remove("open");
+  stepPhrase(() => home());
 };
 
 /* ---------- boot ---------- */

@@ -15,9 +15,10 @@ BRAIN_MODEL = "mistral-medium-3-5"
 TTS_MODEL = "voxtral-mini-tts-2603"
 STT_MODEL = "voxtral-mini-latest"
 
-# TTS is billed per character ($0.016/1k) and the brain per token;
-# tracked so the Presence credits meter reflects reality.
+# TTS is billed per character ($0.016/1k), STT per audio minute, and the
+# brain per token; tracked so the Presence credits meter reflects reality.
 TTS_USD_PER_CHAR = 0.016 / 1000
+STT_USD_PER_SECOND = 0.003 / 60
 BRAIN_USD_PER_INPUT_TOKEN = 1.5 / 1_000_000
 BRAIN_USD_PER_OUTPUT_TOKEN = 7.5 / 1_000_000
 
@@ -62,7 +63,10 @@ class MistralProvider:
             timeout=60,
         )
         r.raise_for_status()
-        return r.json()["text"]
+        data = r.json()
+        secs = data.get("usage", {}).get("prompt_audio_seconds", 0)
+        self.last_call_usd = secs * STT_USD_PER_SECOND
+        return data["text"]
 
     def chat(self, messages: list[dict], max_tokens: int = 300) -> str:
         r = self._session.post(

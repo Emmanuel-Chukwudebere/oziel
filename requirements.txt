@@ -1,2 +1,4 @@
 pywebview>=5.0
 requests>=2.31
+sounddevice>=0.4.6
+numpy>=1.26
