@@ -184,21 +184,31 @@ async function speakUI(text, voice) {
 }
 
 /* ---------- setup flow ---------- */
-function stepKey() {
+async function stepKey() {
   chip("key"); orb("dim"); status("SETUP — YOUR KEY");
   caption("Paste your Mistral API key.<br>It's the only thing you'll ever type.");
   const box = $("cards"); box.innerHTML = "";
   const input = document.createElement("input");
-  input.type = "password"; input.placeholder = "sk-…";
+  input.type = "password"; input.placeholder = "paste your key here";
   const go = document.createElement("button");
   go.className = "card primary"; go.textContent = "Connect";
-  go.onclick = async () => {
+  const submit = async (fn) => {
     go.disabled = true; status("CHECKING KEY");
-    const r = await api().save_key(input.value);
+    let r;
+    try { r = await fn(); }
+    catch (e) { r = { ok: false, error: "App error: " + e }; }
     if (r.ok) stepHear();
     else { go.disabled = false; caption(r.error, true); status("SETUP — YOUR KEY"); }
   };
+  go.onclick = () => submit(() => api().save_key(input.value));
   box.append(input, go);
+  if (await api().local_key_available()) {
+    const local = document.createElement("button");
+    local.className = "card";
+    local.innerHTML = "Use the key found on this machine <small>.env</small>";
+    local.onclick = () => submit(() => api().use_local_key());
+    box.appendChild(local);
+  }
 }
 async function stepHear() {
   chip("hear"); orb("idle");

@@ -28,9 +28,15 @@ class MistralProvider:
         self._session.headers["Authorization"] = f"Bearer {api_key}"
         self.last_call_usd = 0.0
 
-    def validate_key(self) -> bool:
-        r = self._session.get(f"{API}/models", timeout=15)
-        return r.status_code == 200
+    def validate_key(self) -> tuple[bool, str]:
+        """Returns (ok, human-readable reason when not ok)."""
+        try:
+            r = self._session.get(f"{API}/models", timeout=15)
+        except requests.RequestException as e:
+            return False, f"network problem: {e.__class__.__name__}"
+        if r.status_code == 200:
+            return True, ""
+        return False, f"Mistral answered HTTP {r.status_code}: {r.text[:120]}"
 
     def tts(self, text: str, voice: str) -> bytes:
         """Text to WAV bytes."""

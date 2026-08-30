@@ -51,14 +51,35 @@ class Api:
 
     # ---- setup steps ----
     def save_key(self, key: str) -> dict:
-        key = key.strip()
+        key = (key or "").strip()
+        if not key:
+            return {"ok": False, "error": "The field came through empty — the paste may not have landed. Try Ctrl+V again, or use the key found on this machine."}
         provider = MistralProvider(key)
-        if not provider.validate_key():
-            return {"ok": False, "error": "That key was rejected by Mistral."}
+        ok, reason = provider.validate_key()
+        if not ok:
+            return {"ok": False, "error": f"Key check failed ({len(key)} chars received). {reason}"}
         self.cfg["api_key"] = key
         config.save(self.cfg)
         self.provider = provider
         return {"ok": True}
+
+    def _find_local_key(self) -> str | None:
+        """Dev convenience: a .env at the repo root (never shipped in builds)."""
+        env = Path(__file__).resolve().parents[2] / ".env"
+        if env.exists():
+            for line in env.read_text(encoding="utf-8").splitlines():
+                if line.startswith("MISTRAL_API_KEY="):
+                    return line.split("=", 1)[1].strip()
+        return None
+
+    def local_key_available(self) -> bool:
+        return self._find_local_key() is not None
+
+    def use_local_key(self) -> dict:
+        key = self._find_local_key()
+        if not key:
+            return {"ok": False, "error": "No local key found."}
+        return self.save_key(key)
 
     def speak(self, text: str, voice: str | None = None) -> dict:
         if not self.provider:
