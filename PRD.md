@@ -1,6 +1,6 @@
 # Oziel — Product Requirements Document
 
-**Status:** Draft v0.5 · 2026-08-30
+**Status:** Draft v0.6 · 2026-08-30
 **Name:** Oziel — Igbo *ozi* (message/errand) + the angelic *-el*: "the errand angel". Formerly codenamed Jarvis.
 **Wake word:** "Oziel" (custom openWakeWord model — trained and validated in M0)
 **Owner:** Immanuel
@@ -34,7 +34,10 @@ The laptop is the ears, mouth, and hands; the brain is Mistral's API (free tier)
 
 ### F1 — Voice loop (v1)
 Wake word "Oziel" (local, custom openWakeWord model) → streaming STT (**Voxtral Mini Transcribe Realtime**) → intent routing (**Mistral Medium 3.5**) → action → spoken reply (**Voxtral TTS**, streamed sentence-by-sentence). Works with laptop mic/speakers and Bluetooth earbuds (earbuds become default audio when connected). Proactive speech allowed: Oziel may initiate ("the session finished").
-Includes a **first-run setup flow**: mic/audio check, Mistral API key entry, and the owner setting their go-phrase (`CONFIRM_PHRASE`).
+Includes a **voice-driven first-run setup** (decided 2026-08-30): the API key is the *only* typed input (random characters can't be dictated). After the key is pasted, Oziel starts speaking through the system-default output and conducts the rest of setup as a conversation — hearing check, voice/emotion choice, devices. The **go-phrase is captured by voice, not typed**: Oziel transcribes it, reads it back for confirmation, then has the owner repeat it twice as a recognition-reliability check — guaranteeing the phrase that guards risky actions is one STT provably recognizes in the owner's voice. Every spoken question is mirrored on screen as tappable options (voice-first, click-fallback).
+
+### F1b — "The Presence" window (v1)
+A single small window (pywebview: native window rendering HTML/CSS, driven directly by the Python process — no Electron, no server), opened from a system-tray icon. A living **orb** is the interface: it breathes when idle, ripples when listening, glows when speaking, dims when offline or paused. Beneath it: live captions of what Oziel heard and said (mishearings visible instantly), a credits meter ($ used vs $10), and a pause-listening toggle. A ⚙ slide-over holds settings: devices, voice + emotion, go-phrase re-record, API key (masked), verbosity, usage. **Every setting the UI can change, voice can also change** ("Oziel, speak faster") — both edit the same config file. Design language matches oziel.vercel.app: dark ink, ivory text, amber accent.
 
 ### F2 — Coding-session conductor (v2) · **the differentiator**
 Oziel launches and owns coding-agent CLIs (**Claude Code only at launch**) on a pseudo-terminal (ConPTY) it hosts:
@@ -121,9 +124,9 @@ i7-8650U (4 cores), 16 GB RAM, Intel UHD 620. Under the thin-client design this 
 Against the owner's real Mistral key: Voxtral Realtime STT round-trip latency from this laptop's network; Voxtral TTS time-to-first-audio; Medium 3.5 agent-step latency; free-tier rate limits in practice; token/credit burn for a simulated typical day (~100 interactions). Plus: train a custom **"Oziel"** openWakeWord model (synthetic-sample pipeline) and measure detection rate + false triggers over a day of normal room audio; whisper-tiny accuracy on the owner's voice (for F8).
 **Exit:** every "est." in §6 replaced by measured numbers; free-tier viability confirmed or the cost model revised; "Oziel" wake word validated.
 
-### v1 — Voice loop
-Wake word, cloud STT/TTS/brain pipeline, rungs 1–2, confirm gate, earbud routing, first-run setup (mic check, API key, go-phrase).
-**Accept:** "Oziel, pause the music" and "Oziel, create a folder called X and move all PDFs into it" work end-to-end ≤ 2 s to first spoken word; a risky action stalls until the go-phrase.
+### v1 — Voice loop + The Presence
+Wake word, cloud STT/TTS/brain pipeline, rungs 1–2, confirm gate, earbud routing, voice-driven first-run setup, The Presence window + tray icon (F1b).
+**Accept:** "Oziel, pause the music" and "Oziel, create a folder called X and move all PDFs into it" work end-to-end ≤ 2 s to first spoken word; a risky action stalls until the go-phrase; setup completes with only the API key typed; the orb reflects listening/thinking/speaking state live; settings changes from the window and from voice both persist.
 
 ### v1.5 — Offline fallback
 F8 pack, connectivity watcher, auto-switch both directions.
