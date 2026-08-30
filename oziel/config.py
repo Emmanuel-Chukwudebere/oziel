@@ -11,6 +11,7 @@ CONFIG_DIR = Path(os.environ.get("APPDATA", Path.home())) / "Oziel"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
 DEFAULTS = {
+    "user_name": None,        # what Oziel calls the owner
     "api_key": None,          # TODO: encrypt with Windows DPAPI before any public release
     "voice": "en_paul_confident",
     "confirm_phrase": None,   # captured by voice during setup; risky actions are

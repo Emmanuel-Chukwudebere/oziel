@@ -78,7 +78,7 @@
   .card small { color: var(--dim); font-family: ui-monospace, Consolas, monospace; font-size: 0.7rem; }
   .card:disabled { opacity: 0.45; cursor: wait; }
 
-  input[type="password"] {
+  input[type="password"], input[type="text"] {
     width: 100%; background: #12151d; border: 1px solid #232837; border-radius: 10px;
     color: var(--ink); padding: 0.8rem 1rem; font-family: ui-monospace, Consolas, monospace;
     font-size: 0.9rem; outline: none; text-align: center;
@@ -120,7 +120,8 @@
   <div class="status" id="status">WAKING UP</div>
   <div class="chips" id="chips" hidden>
     <div class="chip" data-s="key"></div><div class="chip" data-s="hear"></div>
-    <div class="chip" data-s="voice"></div><div class="chip" data-s="done"></div>
+    <div class="chip" data-s="name"></div><div class="chip" data-s="voice"></div>
+    <div class="chip" data-s="done"></div>
   </div>
 </div>
 
@@ -139,6 +140,9 @@
   <div class="row"><label>Replies</label><div class="cards" id="setVerbosity"></div></div>
   <div class="row"><label>Go-phrase</label>
     <button class="card" disabled>Recorded by voice — arrives with my ears (next build)</button>
+  </div>
+  <div class="row"><label>Start over</label>
+    <button class="card" id="resetSetup">Reset setup — relive the first run</button>
   </div>
   <button class="card" id="closeSettings">← Back</button>
 </div>
@@ -171,7 +175,7 @@ function cards(list) {          // [[label, onclick, primary, sub], ...]
 }
 function chip(step) {
   $("chips").hidden = false;
-  const order = ["key", "hear", "voice", "done"];
+  const order = ["key", "hear", "name", "voice", "done"];
   document.querySelectorAll(".chip").forEach(c =>
     c.classList.toggle("on", order.indexOf(c.dataset.s) <= order.indexOf(step)));
 }
@@ -221,9 +225,27 @@ async function stepHear() {
   orb("idle"); status("WAITING");
   if (!r.ok) { caption("I couldn't speak: " + r.error, true); }
   cards([
-    ["Yes — I hear you", () => stepVoice(), true],
+    ["Yes — I hear you", () => stepName(), true],
     ["Play it again", () => stepHear()],
   ]);
+}
+function stepName() {
+  chip("name"); orb("idle"); status("SETUP — YOUR NAME");
+  caption("What should I call you?<br><small style='color:var(--dim)'>Once I have ears, you'll just say it.</small>");
+  const box = $("cards"); box.innerHTML = "";
+  const input = document.createElement("input");
+  input.type = "text"; input.placeholder = "your name";
+  const go = document.createElement("button");
+  go.className = "card primary"; go.textContent = "That's me";
+  go.onclick = async () => {
+    go.disabled = true;
+    const r = await api().save_name(input.value);
+    if (!r.ok) { go.disabled = false; caption(r.error, true); return; }
+    caption("");
+    await speakUI(`Nice to meet you, ${input.value.trim()}. Now — help me pick my voice.`);
+    stepVoice();
+  };
+  box.append(input, go);
 }
 function stepVoice() {
   chip("voice"); status("SETUP — PICK MY VOICE");
@@ -264,7 +286,7 @@ async function home() {
   orb("idle"); status("RESTING — EARS ARRIVE NEXT BUILD");
   caption("I'm set up. The voice loop is the next milestone.");
   cards([["Say hello", async () => {
-    await speakUI("Hello Immanuel. Still here. Still ready.");
+    await speakUI(`Hello${s.user_name ? " " + s.user_name : ""}. Still here. Still ready.`);
     status("RESTING — EARS ARRIVE NEXT BUILD");
   }, true]]);
   $("meter").hidden = false;
@@ -294,6 +316,10 @@ $("gear").onclick = async () => {
   $("settings").classList.add("open");
 };
 $("closeSettings").onclick = () => $("settings").classList.remove("open");
+$("resetSetup").onclick = async () => {
+  await api().reset_setup();
+  location.reload();
+};
 
 /* ---------- boot ---------- */
 window.addEventListener("pywebviewready", async () => {

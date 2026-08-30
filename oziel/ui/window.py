@@ -38,6 +38,7 @@ class Api:
         return {
             "setup_complete": self.cfg["setup_complete"],
             "has_key": bool(self.cfg["api_key"]),
+            "user_name": self.cfg.get("user_name"),
             "voice": self.cfg["voice"],
             "verbosity": self.cfg["verbosity"],
             "has_phrase": bool(self.cfg["confirm_phrase"]),
@@ -103,13 +104,29 @@ class Api:
         config.save(self.cfg)
         return {"ok": True}
 
+    def save_name(self, name: str) -> dict:
+        name = (name or "").strip()
+        if not name:
+            return {"ok": False, "error": "I didn't catch a name — type it in."}
+        self.cfg["user_name"] = name
+        config.save(self.cfg)
+        return {"ok": True}
+
     def complete_setup(self) -> dict:
         self.cfg["setup_complete"] = True
         config.save(self.cfg)
+        name = self.cfg.get("user_name") or ""
         self.speak(
-            "Setup complete. My ears arrive in the next build. "
-            "I can't wait to get to work."
+            f"Setup complete{', ' + name if name else ''}. "
+            "My ears arrive in the next build. I can't wait to get to work."
         )
+        return {"ok": True}
+
+    def reset_setup(self) -> dict:
+        """Wipe everything and start over — powers the Reset button in settings."""
+        self.cfg = dict(config.DEFAULTS)
+        config.save(self.cfg)
+        self.provider = None
         return {"ok": True}
 
     # ---- settings ----
