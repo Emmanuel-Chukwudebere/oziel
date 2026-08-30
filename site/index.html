@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Oziel — a voice that runs my computer</title>
+<meta name="description" content="Ozi means errand in Igbo. The -el makes it an angel. Oziel is a voice-first assistant for Windows that conducts AI coding sessions. Building in public.">
+<style>
+  :root {
+    --bg: #0b0d12;
+    --ink: #e8e6e1;
+    --dim: #8a8f9c;
+    --accent: #d4a24e;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: ui-serif, "Iowan Old Style", Georgia, "Times New Roman", serif;
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    padding: 2rem;
+  }
+  main { max-width: 34rem; text-align: center; }
+  .mark {
+    font-size: clamp(3.5rem, 12vw, 6rem);
+    letter-spacing: 0.02em;
+    font-weight: 400;
+  }
+  .mark em { font-style: normal; color: var(--accent); }
+  .meaning {
+    margin-top: 1.25rem;
+    color: var(--dim);
+    font-size: 1.05rem;
+    line-height: 1.7;
+  }
+  .tagline {
+    margin-top: 1.75rem;
+    font-size: 1.35rem;
+    line-height: 1.5;
+  }
+  .status {
+    margin-top: 2.5rem;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 0.8rem;
+    color: var(--dim);
+    letter-spacing: 0.05em;
+  }
+  .status::before {
+    content: "";
+    display: inline-block;
+    width: 0.5em; height: 0.5em;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-right: 0.6em;
+    animation: pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.25 } }
+  nav { margin-top: 1.25rem; }
+  nav a {
+    color: var(--ink);
+    text-decoration: none;
+    border-bottom: 1px solid var(--dim);
+    padding-bottom: 0.1em;
+    margin: 0 0.75rem;
+    font-size: 0.95rem;
+  }
+  nav a:hover { color: var(--accent); border-color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1 class="mark">Ozi<em>el</em></h1>
+  <p class="meaning"><strong>Ozi</strong> means <em>message, errand</em> in Igbo.<br>The <strong>-el</strong> makes it an angel.</p>
+  <p class="tagline">A voice that runs my computer.</p>
+  <p class="status">DAY 1 — OZIEL SPOKE ITS FIRST WORDS</p>
+  <nav>
+    <a href="https://github.com/Emmanuel-Chukwudebere/oziel">GitHub</a>
+    <a href="https://github.com/Emmanuel-Chukwudebere/oziel/blob/main/PRD.md">The plan</a>
+  </nav>
+</main>
+</body>
+</html>
