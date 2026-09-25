@@ -3,406 +3,557 @@
 <head>
 <meta charset="UTF-8">
 <title>Oziel</title>
+<link rel="stylesheet" href="fonts.css">
 <style>
   :root {
-    --bg: #0b0d12; --ink: #e8e6e1; --dim: #8a8f9c;
-    --accent: #d4a24e; --accent-soft: rgba(212,162,78,0.18);
+    --bg: #101010;
+    --ink: #FDFDFD;
+    --cream: #F7F2E8;
+    /* the accent: one hex drives the listening dots, the buttons and
+       the owner's transcript line. change these two together. */
+    --accent: #D4A24E;
+    --accent-soft: rgba(212,162,78,0.12);
+    --dim: rgba(253,253,253,0.38);
+    --hair: rgba(253,253,253,0.20);
+    --err: #D46A4E;
+    --serif: 'Cormorant Garamond', 'Iowan Old Style', Georgia, serif;
+    --sans: 'DM Sans', 'Segoe UI', system-ui, sans-serif;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
-    background: var(--bg); color: var(--ink);
-    font-family: ui-serif, "Iowan Old Style", Georgia, serif;
-    height: 100vh; overflow: hidden; user-select: none;
+    background: var(--bg); color: var(--ink); font-family: var(--serif);
+    overflow: hidden; user-select: none; cursor: default;
   }
-  header {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 1rem 1.25rem;
-  }
-  header .brand { letter-spacing: 0.04em; }
-  header .brand em { font-style: normal; color: var(--accent); }
-  header button {
-    background: none; border: none; color: var(--dim);
-    font-size: 1.1rem; cursor: pointer;
-  }
-  header button:hover { color: var(--accent); }
+  /* the design is 800x600: header 72 + content 434 + buttons 94.
+     laid out as flex so those three bands hold their proportions even
+     if the window frame eats a few pixels. */
+  .screen { position: absolute; inset: 0; display: flex; flex-direction: column; }
 
-  /* ------ the orb ------ */
-  .stage { display: flex; flex-direction: column; align-items: center; padding-top: 1.25rem; }
-  .orb {
-    width: 130px; height: 130px; border-radius: 50%;
-    background: radial-gradient(circle at 36% 32%,
-      #f4e3c2 0%, var(--accent) 34%, #7a5a22 72%, #211a0d 100%);
-    box-shadow: 0 0 42px var(--accent-soft);
-    animation: breathe 4.5s ease-in-out infinite;
-    position: relative;
+  /* ------ header ------ */
+  .hdr {
+    flex: 0 0 72px; height: 72px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 28px; gap: 8px;
   }
-  @keyframes breathe {
-    0%, 100% { transform: scale(1);    box-shadow: 0 0 32px var(--accent-soft); }
-    50%      { transform: scale(1.05); box-shadow: 0 0 58px var(--accent-soft); }
+  .hdr.left { justify-content: flex-start; }
+  .hdr.left .title { flex: 1 1 auto; }
+  .title { font-family: var(--serif); font-weight: 600; font-size: 22px; line-height: 130%; }
+  .iconbtn {
+    width: 32px; height: 32px; flex: 0 0 32px; border: none; background: none;
+    border-radius: 999px; display: grid; place-items: center;
+    color: var(--ink); opacity: 0.7; cursor: pointer;
   }
-  .orb.speaking { animation: glow 0.9s ease-in-out infinite; }
-  @keyframes glow {
-    0%, 100% { box-shadow: 0 0 40px rgba(212,162,78,0.35); transform: scale(1.02); }
-    50%      { box-shadow: 0 0 85px rgba(212,162,78,0.65); transform: scale(1.08); }
-  }
-  .orb.listening::after {
-    content: ""; position: absolute; inset: -14px; border-radius: 50%;
-    border: 1.5px solid var(--accent); opacity: 0;
-    animation: ripple 1.6s ease-out infinite;
-  }
-  @keyframes ripple {
-    0% { transform: scale(0.85); opacity: 0.7; } 100% { transform: scale(1.25); opacity: 0; }
-  }
-  .orb.dim { filter: grayscale(0.8) brightness(0.55); animation: none; }
+  .iconbtn:hover { opacity: 1; color: var(--accent); }
+  .iconbtn.back { color: var(--cream); }
+  .iconbtn.back:hover { color: var(--cream); opacity: 1; }
 
+  /* ------ content: orb + transcript ------ */
+  .content {
+    flex: 1 1 auto; min-height: 0;
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 10px; padding: 16px 0;
+  }
+  #orb {
+    width: 300px; height: 300px; display: block; flex: 0 0 auto; margin: -16px 0;
+    -webkit-mask-image: linear-gradient(to bottom,
+      transparent 0%, #000 16%, #000 84%, transparent 100%);
+    mask-image: linear-gradient(to bottom,
+      transparent 0%, #000 16%, #000 84%, transparent 100%);
+  }
+  .transcript {
+    width: 100%; flex: 1 1 auto; min-height: 60px; position: relative;
+  }
+  /* the newest line sits on the band's floor; a long reply pushes the older
+     text up past the orb, where it dissolves into the fade */
+  .tstack {
+    position: absolute; left: 0; right: 0; bottom: 6px; height: 210px;
+    padding: 0 28px; overflow: hidden;
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: flex-end; gap: 12px; text-align: center;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 88px, #000 100%);
+    mask-image: linear-gradient(to bottom, transparent 0, #000 88px, #000 100%);
+    -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  }
+  .line {
+    font-family: var(--serif); font-weight: 400; font-size: 16px;
+    line-height: 125%; max-width: 744px;
+  }
+  .line.you { color: var(--accent); }
+  .line.oz  { color: var(--ink); }
+  .line:empty { display: none; }
   .status {
-    margin-top: 1.1rem; font-family: ui-monospace, Consolas, monospace;
-    font-size: 0.72rem; letter-spacing: 0.28em; color: var(--dim);
-    text-transform: uppercase;
+    flex: 0 0 auto; width: 100%; text-align: center;
+    font-family: var(--sans); font-size: 10px; letter-spacing: 0.22em;
+    text-transform: uppercase; color: var(--dim); min-height: 16px;
+  }
+  .status.err {
+    color: var(--err); font-size: 12px; letter-spacing: 0.01em;
+    text-transform: none; max-width: 620px; margin: 0 auto;
   }
 
-  /* ------ captions / content ------ */
-  .content { padding: 1.4rem 1.6rem; text-align: center; }
-  .caption { color: var(--ink); font-size: 1.02rem; line-height: 1.55; min-height: 3.2em; }
-  .caption .err { color: #d46a4e; font-size: 0.9rem; }
-
-  .cards { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1.1rem; }
-  .card {
-    background: #12151d; border: 1px solid #232837; border-radius: 10px;
-    color: var(--ink); padding: 0.8rem 1rem; font-size: 0.98rem;
-    cursor: pointer; font-family: inherit;
-    display: flex; justify-content: space-between; align-items: center;
+  /* the one typed step: the input needs room the live layout doesn't */
+  #home.keying #orb { margin: -26px 0; }
+  #home.keying .transcript { flex: 0 0 auto; min-height: 44px; }
+  #keybox { display: flex; justify-content: center; }
+  #keybox[hidden] { display: none; }
+  #keyInput {
+    width: 440px; background: rgba(253,253,253,0.04);
+    border: 1px solid var(--hair); border-radius: 999px;
+    padding: 11px 20px; color: var(--ink); font-family: var(--sans);
+    font-size: 13px; letter-spacing: 0.02em; text-align: center; outline: none;
   }
-  .card:hover { border-color: var(--accent); }
-  .card.primary { border-color: var(--accent); background: var(--accent-soft); }
-  .card small { color: var(--dim); font-family: ui-monospace, Consolas, monospace; font-size: 0.7rem; }
-  .card:disabled { opacity: 0.45; cursor: wait; }
+  #keyInput::placeholder { color: var(--dim); letter-spacing: 0.01em; }
+  #keyInput:focus { border-color: var(--accent); }
 
-  input[type="password"], input[type="text"] {
-    width: 100%; background: #12151d; border: 1px solid #232837; border-radius: 10px;
-    color: var(--ink); padding: 0.8rem 1rem; font-family: ui-monospace, Consolas, monospace;
-    font-size: 0.9rem; outline: none; text-align: center;
+  /* ------ buttons ------ */
+  .btnrow {
+    flex: 0 0 94px; height: 94px;
+    display: flex; align-items: flex-start; gap: 16px; padding: 20px 120px 32px;
   }
-  input:focus { border-color: var(--accent); }
-
-  .chips {
-    display: flex; gap: 0.45rem; justify-content: center; margin-top: 0.4rem;
+  .pill {
+    flex: 1 1 0; min-width: 0; height: 42px; padding: 10px 20px;
+    border: 1px solid var(--accent); border-radius: 999px; background: none;
+    color: var(--accent); font-family: var(--sans); font-weight: 400;
+    font-size: 14px; line-height: 160%; letter-spacing: 0.01em;
+    display: flex; align-items: center; justify-content: center;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    cursor: pointer;
   }
-  .chip {
-    width: 26px; height: 3px; border-radius: 2px; background: #232837;
-  }
-  .chip.on { background: var(--accent); }
+  .pill:hover { background: var(--accent-soft); }
+  .pill:disabled { opacity: 0.4; cursor: default; background: none; }
 
-  .meter { margin-top: 1.4rem; font-family: ui-monospace, Consolas, monospace; font-size: 0.72rem; color: var(--dim); }
-  .meter .bar { height: 3px; background: #232837; border-radius: 2px; margin-top: 0.4rem; }
-  .meter .fill { height: 100%; background: var(--accent); border-radius: 2px; width: 0%; }
-
-  /* settings slide-over */
+  /* ------ settings ------ */
   #settings {
-    position: fixed; inset: 0; background: rgba(11,13,18,0.96);
-    padding: 2rem 1.6rem; transform: translateX(100%); transition: transform 0.25s ease;
-    overflow-y: auto;
+    background: var(--bg); transform: translateX(100%);
+    transition: transform 0.22s ease;
   }
   #settings.open { transform: translateX(0); }
-  #settings h2 { font-weight: 400; margin-bottom: 1.2rem; }
-  #settings .row { margin-bottom: 1rem; text-align: left; }
-  #settings .row label { display: block; color: var(--dim); font-size: 0.8rem; margin-bottom: 0.4rem; }
+  .setbody {
+    flex: 1 1 auto; min-height: 0;
+    padding: 8px 28px 28px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 20px;
+  }
+  .row { display: flex; flex-direction: column; gap: 10px; }
+  .rlabel {
+    font-family: var(--sans); font-size: 10px; letter-spacing: 0.22em;
+    text-transform: uppercase; color: var(--dim);
+  }
+  .opts { display: flex; flex-wrap: wrap; gap: 12px; }
+  .opt {
+    padding: 9px 18px; border: 1px solid var(--hair); border-radius: 999px;
+    background: none; color: rgba(253,253,253,0.72); font-family: var(--sans);
+    font-size: 13px; line-height: 160%; letter-spacing: 0.01em;
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+  }
+  .opt:hover { border-color: var(--accent); color: var(--accent); }
+  .opt.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .opt .sub { font-size: 11px; opacity: 0.55; }
+  .opt.note { cursor: default; border-style: dashed; }
+  .opt.note:hover { border-color: var(--hair); color: rgba(253,253,253,0.72); }
+  .opt.danger:hover { border-color: var(--err); color: var(--err); }
 </style>
 </head>
 <body>
-<header>
-  <span class="brand">Ozi<em>el</em></span>
-  <button id="gear" title="Settings">⚙</button>
-</header>
 
-<div class="stage">
-  <div class="orb" id="orb"></div>
-  <div class="status" id="status">WAKING UP</div>
-  <div class="chips" id="chips" hidden>
-    <div class="chip" data-s="key"></div><div class="chip" data-s="hear"></div>
-    <div class="chip" data-s="name"></div><div class="chip" data-s="voice"></div>
-    <div class="chip" data-s="phrase"></div><div class="chip" data-s="done"></div>
+<!-- ---------------- home ---------------- -->
+<div class="screen" id="home">
+  <div class="hdr">
+    <span class="title">Oziel</span>
+    <button class="iconbtn" id="gear" title="Settings">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6 1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+    </button>
   </div>
+
+  <div class="content">
+    <canvas id="orb" width="300" height="300"></canvas>
+    <div class="transcript" id="transcript">
+      <div class="tstack">
+        <div class="line you" id="lineYou"></div>
+        <div class="line oz" id="lineOz"></div>
+      </div>
+    </div>
+    <div id="keybox" hidden>
+      <input id="keyInput" type="password" spellcheck="false" placeholder="paste your Gemini API key">
+    </div>
+    <div class="status" id="status">waking up</div>
+  </div>
+
+  <div class="btnrow" id="btnrow"></div>
 </div>
 
-<div class="content">
-  <div class="caption" id="caption"></div>
-  <div class="cards" id="cards"></div>
-  <div class="meter" id="meter" hidden>
-    <span id="meterText">credits $0.00 / $10.00</span>
-    <div class="bar"><div class="fill" id="meterFill"></div></div>
+<!-- ---------------- settings ---------------- -->
+<div class="screen" id="settings">
+  <div class="hdr left">
+    <button class="iconbtn back" id="closeSettings" title="Back">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19 12H5"></path><path d="M12 19l-7-7 7-7"></path>
+      </svg>
+    </button>
+    <span class="title">Settings</span>
   </div>
-</div>
-
-<div id="settings">
-  <h2>Settings</h2>
-  <div class="row"><label>Voice</label><div class="cards" id="setVoice"></div></div>
-  <div class="row"><label>Replies</label><div class="cards" id="setVerbosity"></div></div>
-  <div class="row"><label>Go-phrase</label>
-    <button class="card" id="rerecordPhrase">🎙 Re-record go-phrase</button>
+  <div class="setbody">
+    <div class="row"><span class="rlabel">Voice</span><div class="opts" id="setVoice"></div></div>
+    <div class="row"><span class="rlabel">Replies</span><div class="opts" id="setVerbosity"></div></div>
+    <div class="row"><span class="rlabel">Live audio</span><div class="opts" id="setEcho"></div></div>
+    <div class="row"><span class="rlabel">Go-phrase</span>
+      <div class="opts"><span class="opt note">Just tell me: “change my go-phrase”</span></div>
+    </div>
+    <div class="row"><span class="rlabel">Start over</span>
+      <div class="opts"><button class="opt danger" id="resetSetup">Reset setup — relive the first run</button></div>
+    </div>
   </div>
-  <div class="row"><label>Start over</label>
-    <button class="card" id="resetSetup">Reset setup — relive the first run</button>
-  </div>
-  <button class="card" id="closeSettings">← Back</button>
 </div>
 
 <script>
 const $ = id => document.getElementById(id);
 const api = () => window.pywebview.api;
 const VOICES = [
-  ["en_paul_neutral", "Neutral", "steady and calm"],
-  ["en_paul_confident", "Confident", "gets things done"],
-  ["en_paul_happy", "Happy", "sunny, upbeat"],
+  ["Charon", "calm and deep"],
+  ["Puck", "bright and upbeat"],
+  ["Kore", "firm and clear"],
 ];
 
-function orb(state) {           // idle | speaking | listening | dim
-  $("orb").className = "orb" + (state === "idle" ? "" : " " + state);
+/* ============================================================
+   the orb — a flat field of dots, the way the design draws it:
+   an unordered dot matrix, densest in the middle, dissolving at
+   the rim. it never spins. at rest it breathes slowly. a shock
+   flings every dot along its own private line, mostly outward,
+   and one spring per dot pulls it home, so the disc re-forms.
+   ============================================================ */
+const cvs = $("orb"), ctx = cvs.getContext("2d");
+const SIZE = 300, R = 126, LV = 10;
+const STEP = 6.2;             // matrix pitch, px
+const ROWP = STEP * 0.9;      // hex rows sit a little closer than the pitch
+const SCATTER = 88;           // px a dot flies at full displacement
+let dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+function fitCanvas() {
+  cvs.width = SIZE * dpr; cvs.height = SIZE * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
-function status(t) { $("status").textContent = t; }
-function caption(t, isErr) {
-  $("caption").innerHTML = isErr ? `<span class="err">${t}</span>` : t;
-}
-function cards(list) {          // [[label, onclick, primary, sub], ...]
-  const box = $("cards"); box.innerHTML = "";
-  for (const [label, fn, primary, sub] of list) {
-    const b = document.createElement("button");
-    b.className = "card" + (primary ? " primary" : "");
-    b.innerHTML = label + (sub ? `<small>${sub}</small>` : "");
-    b.onclick = () => fn(b);
-    box.appendChild(b);
+fitCanvas();
+
+const dots = [];
+for (let y = -R; y <= R; y += ROWP) {
+  const row = Math.round((y + R) / ROWP);
+  for (let x = -R + (row % 2 ? STEP / 2 : 0); x <= R; x += STEP) {
+    const rr = Math.hypot(x, y) / R;
+    if (rr > 1) continue;
+    // a nudge off the grid: the matrix reads deliberate, never mechanical
+    const jx = (Math.random() - 0.5) * STEP * 0.4;
+    const jy = (Math.random() - 0.5) * STEP * 0.4;
+    const th = Math.atan2(y, x);
+    const a = Math.random() * Math.PI * 2, m = 0.45 + Math.random() * 0.75;
+    dots.push({
+      x: (x + jx) / R, y: (y + jy) / R,           // rest place, unit disc
+      // flung outward, but every dot keeps its own angle: no clean ring
+      fx: Math.cos(th) * 0.65 + Math.cos(a) * m,
+      fy: Math.sin(th) * 0.65 + Math.sin(a) * m,
+      base: (1 - 0.62 * Math.pow(rr, 3)) * (0.74 + 0.26 * Math.random()),
+      d: 0, v: 0,                                 // displacement + velocity
+      sz: 1.5,
+      ph: Math.random() * Math.PI * 2,            // phase for wander + twinkle
+      tw: Math.random(),                          // accent seed
+    });
   }
 }
-function chip(step) {
-  $("chips").hidden = false;
-  const order = ["key", "hear", "name", "voice", "phrase", "done"];
-  document.querySelectorAll(".chip").forEach(c =>
-    c.classList.toggle("on", order.indexOf(c.dataset.s) <= order.indexOf(step)));
-}
-async function speakUI(text, voice) {
-  orb("speaking"); status("SPEAKING");
-  const r = await api().speak(text, voice || null);
-  orb("idle"); status("IDLE");
-  if (!r.ok) caption("Voice error: " + r.error, true);
-  return r.ok;
+
+// gap = ms between shocks (0 = no shocks, only the breath), s = how hard
+// each lands, pu = how deep the slow pulse goes. speaking is paced so the
+// cycle reads: scatter, re-form, a beat of crisp field, again.
+const MOOD = {
+  idle:       { e: 0.06, b: 0.64, gap: 0,    s: 0,    pu: 0.055 },
+  connecting: { e: 0.20, b: 0.62, gap: 1200, s: 0.45, pu: 0.050 },
+  listening:  { e: 0.34, b: 0.92, gap: 2200, s: 0.5,  pu: 0.045 },
+  speaking:   { e: 1.00, b: 1.00, gap: 950,  s: 1.8,  pu: 0.030 },
+  muted:      { e: 0.07, b: 0.44, gap: 0,    s: 0,    pu: 0.040 },
+  dim:        { e: 0.06, b: 0.50, gap: 0,    s: 0,    pu: 0.050 },
+};
+let mood = "idle", energy = 0.06, energyT = 0.06;
+let bright = 0.56, brightT = 0.56, pulseAmp = 0.055, pulseT = 0.055;
+let accentAmt = 0, clock = 0;
+let lastFrame = 0, nextBurst = 0;
+
+function orb(state) {
+  mood = MOOD[state] ? state : "idle";
+  energyT = MOOD[mood].e; brightT = MOOD[mood].b; pulseT = MOOD[mood].pu;
 }
 
-/* ---------- setup flow ---------- */
+function impulse(strength) {
+  // the whole field takes the hit, each dot with its own share
+  for (const p of dots) p.v += strength * (0.25 + 0.75 * Math.random());
+}
+
+let styles = [];
+function buildStyles() {
+  const css = getComputedStyle(document.documentElement);
+  const rgb = name => {
+    const v = css.getPropertyValue(name).trim();
+    const hex = v.match(/^#([0-9a-fA-F]{6})$/);
+    if (hex) { const n = parseInt(hex[1], 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+    return (v.match(/\d+/g) || ["253", "253", "253"]).slice(0, 3).map(Number);
+  };
+  styles = [rgb("--ink"), rgb("--accent")].map(c =>
+    Array.from({ length: LV }, (_, i) =>
+      "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + ((i + 1) / LV).toFixed(2) + ")"));
+}
+buildStyles();
+const buckets = [[], []];
+for (const b of buckets) for (let i = 0; i < LV; i++) b.push([]);
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - lastFrame) / 1000) || 0.016;
+  lastFrame = now; clock += dt;
+
+  energy += (energyT - energy) * Math.min(1, dt * 3.5);
+  bright += (brightT - bright) * Math.min(1, dt * 3.5);
+  pulseAmp += (pulseT - pulseAmp) * Math.min(1, dt * 2.0);
+  accentAmt += ((mood === "listening" ? 1 : 0) - accentAmt) * Math.min(1, dt * 2.2);
+
+  const gap = MOOD[mood].gap;
+  if (gap && now > nextBurst) {
+    impulse(MOOD[mood].s);
+    nextBurst = now + gap * (0.7 + Math.random() * 0.6);
+  }
+
+  // the slow breath: ~4.7s in and out, the whole field with it
+  const pulse = 1 + pulseAmp * Math.sin(clock * 1.34);
+  const glow = 1 + 0.09 * Math.sin(clock * 1.34 - 0.4);
+  const wander = 0.3 + 1.2 * energy;
+  for (const b of buckets) for (const list of b) list.length = 0;
+
+  for (const p of dots) {
+    // one spring per dot: the shock scatters, this brings it home
+    p.v += -32 * p.d * dt;
+    p.v *= Math.exp(-4.2 * dt);
+    p.d += p.v * dt;
+    if (p.d > 0.22) { p.d = 0.22; p.v *= -0.3; }
+    else if (p.d < -0.15) { p.d = -0.15; p.v *= -0.3; }
+
+    const rad = R * pulse;
+    const px = 150 + p.x * rad + p.fx * p.d * SCATTER
+               + Math.sin(clock * 2.3 + p.ph) * wander;
+    const py = 150 + p.y * rad + p.fy * p.d * SCATTER
+               + Math.sin(clock * 1.9 + p.ph * 2.1) * wander;
+
+    const twinkle = 0.86 + 0.14 * Math.sin(clock * 1.7 + p.ph * 3);
+    const acc = ((p.tw + clock * 0.035) % 1) < 0.3 * accentAmt;
+    // a dot thins out as it flies, so a burst reads as spray
+    let a = p.base * twinkle * bright * glow * (1 - 0.8 * Math.max(0, p.d));
+    if (acc) a = Math.min(1, a * 1.3);
+    if (a < 0.06) continue;
+    const lv = Math.min(LV - 1, Math.max(0, Math.round(a * LV) - 1));
+    buckets[acc ? 1 : 0][lv].push(px, py, p.sz);
+  }
+
+  ctx.clearRect(0, 0, SIZE, SIZE);
+  for (let c = 0; c < 2; c++) {
+    for (let lv = 0; lv < LV; lv++) {
+      const list = buckets[c][lv];
+      if (!list.length) continue;
+      ctx.fillStyle = styles[c][lv];
+      for (let i = 0; i < list.length; i += 3) ctx.fillRect(list[i], list[i + 1], list[i + 2], list[i + 2]);
+    }
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ============================================================
+   screen plumbing
+   ============================================================ */
+let stateWord = "waking up", flashTimer = null;
+
+function stat(word) {
+  stateWord = word;
+  if (flashTimer) return;
+  const el = $("status"); el.className = "status"; el.textContent = word;
+}
+function flash(text, ms) {
+  clearTimeout(flashTimer);
+  const el = $("status"); el.className = "status"; el.textContent = text;
+  flashTimer = setTimeout(() => { flashTimer = null; stat(stateWord); }, ms || 1700);
+}
+function fail(text) {
+  clearTimeout(flashTimer); flashTimer = null;
+  const el = $("status"); el.className = "status err"; el.textContent = text;
+}
+function lines(you, oz, bare) {
+  $("lineYou").textContent = you ? (bare ? you : "You: " + you) : "";
+  $("lineOz").textContent = oz ? (bare ? oz : "Oziel: " + oz) : "";
+}
+function pills(list) {              // [[label, onclick], ...]
+  const row = $("btnrow"); row.innerHTML = "";
+  for (const [label, fn] of list) {
+    const b = document.createElement("button");
+    b.className = "pill";
+    b.textContent = label;
+    b.onclick = () => fn(b);
+    row.appendChild(b);
+  }
+}
+
+/* ---------- key: the one typed step ---------- */
 async function stepKey() {
-  chip("key"); orb("dim"); status("SETUP — YOUR KEY");
-  caption("Paste your Mistral API key.<br>It's the only thing you'll ever type.");
-  const box = $("cards"); box.innerHTML = "";
-  const input = document.createElement("input");
-  input.type = "password"; input.placeholder = "paste your key here";
-  const go = document.createElement("button");
-  go.className = "card primary"; go.textContent = "Connect";
+  $("home").classList.add("keying");
+  orb("dim"); stat("setup · your key");
+  lines("", "Paste your Gemini API key. It is the only thing you will ever "
+            + "type — after this, we talk.", true);
+  $("keybox").hidden = false;
+  const input = $("keyInput"); input.value = "";
+  setTimeout(() => input.focus(), 60);
+
   const submit = async (fn) => {
-    go.disabled = true; status("CHECKING KEY");
+    document.querySelectorAll("#btnrow .pill").forEach(b => b.disabled = true);
+    stat("checking key");
     let r;
     try { r = await fn(); }
     catch (e) { r = { ok: false, error: "App error: " + e }; }
-    if (r.ok) stepHear();
-    else { go.disabled = false; caption(r.error, true); status("SETUP — YOUR KEY"); }
+    if (r.ok) { goLive(); return; }
+    document.querySelectorAll("#btnrow .pill").forEach(b => b.disabled = false);
+    stat("setup · your key"); fail(r.error);
   };
-  go.onclick = () => submit(() => api().save_key(input.value));
-  box.append(input, go);
+  const list = [["Connect", () => submit(() => api().save_key($("keyInput").value))]];
   if (await api().local_key_available()) {
-    const local = document.createElement("button");
-    local.className = "card";
-    local.innerHTML = "Use the key found on this machine <small>.env</small>";
-    local.onclick = () => submit(() => api().use_local_key());
-    box.appendChild(local);
+    list.push(["Use the key on this machine", () => submit(() => api().use_local_key())]);
   }
+  pills(list);
+  input.onkeydown = e => { if (e.key === "Enter") $("btnrow").firstChild.click(); };
 }
-async function stepHear() {
-  chip("hear"); orb("idle");
-  caption("From here on, we talk.");
-  cards([]);
-  await new Promise(r => setTimeout(r, 400));
-  orb("speaking"); status("SPEAKING");
-  caption("“Hello. I'm Oziel. If you can hear me clearly, tap yes.”");
-  const r = await api().greet();
-  orb("idle"); status("WAITING");
-  if (!r.ok) { caption("I couldn't speak: " + r.error, true); }
-  cards([
-    ["Yes — I hear you", () => stepName(), true],
-    ["Play it again", () => stepHear()],
-  ]);
+
+/* ---------- the live session (this IS the app) ---------- */
+let liveOn = false, muted = false, fails = 0, phase = "setup";
+let liveYou = "", liveOz = "", lastYou = "", lastOz = "";
+let lastPoke = 0;
+
+function renderLive() {
+  if (liveYou || liveOz) lines(liveYou, liveOz);
+  else lines(lastYou, lastOz);
 }
-function stepName() {
-  chip("name"); orb("idle"); status("SETUP — YOUR NAME");
-  caption("What should I call you?<br><small style='color:var(--dim)'>Once I have ears, you'll just say it.</small>");
-  const box = $("cards"); box.innerHTML = "";
-  const input = document.createElement("input");
-  input.type = "text"; input.placeholder = "your name";
-  const go = document.createElement("button");
-  go.className = "card primary"; go.textContent = "That's me";
-  go.onclick = async () => {
-    go.disabled = true;
-    const r = await api().save_name(input.value);
-    if (!r.ok) { go.disabled = false; caption(r.error, true); return; }
-    caption("");
-    await speakUI(`Nice to meet you, ${input.value.trim()}. Now — help me pick my voice.`);
-    stepVoice();
-  };
-  box.append(input, go);
-}
-function stepVoice() {
-  chip("voice"); status("SETUP — PICK MY VOICE");
-  caption("Which voice should be mine?<br>Tap ▶ to hear each.");
-  cards(VOICES.map(([slug, name, sub]) => [
-    `▶ ${name}`,
-    async (btn) => {
-      btn.disabled = true;
-      await speakUI(null_or_sample(slug), slug);
-      btn.disabled = false;
-      cards([[`Use ${name}`, async () => {
-        await api().choose_voice(slug); stepPhrase(() => stepDone());
-      }, true], ["← Hear the others", () => stepVoice()]]);
-    },
-    false, sub,
-  ]));
-}
-function null_or_sample(slug) {
-  return {
-    en_paul_neutral: "This is my neutral voice. Steady and calm.",
-    en_paul_confident: "This is my confident voice. I get things done.",
-    en_paul_happy: "This is my happy voice. Every errand is a pleasure!",
-  }[slug];
-}
-/* ---------- listening + go-phrase ---------- */
-function norm(t) {
-  return (t || "").toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
-}
-async function listen(maxs) {
-  orb("listening"); status("LISTENING");
-  const r = await api().record_and_transcribe(maxs || 10);
-  orb("idle"); status("IDLE");
-  return r;
-}
-function stepPhrase(onDone) {
-  chip("phrase"); status("SETUP — YOUR GO-PHRASE");
-  caption("Risky actions — deleting, sending, paying — wait for a phrase only you know.<br>Think of one you'd never say by accident, then tap and say it.");
-  cards([
-    ["🎙 Record my phrase", () => capturePhrase(onDone), true],
-    ["Skip for now", async () => {
-      await speakUI("Skipping. Risky actions stay locked until we set it.");
-      onDone();
+function liveWord(word) { stat((phase === "setup" ? "setup · " : "live · ") + word); }
+function livePills() {
+  pills([
+    [muted ? "Unmute" : "Mute", async () => {
+      muted = !muted;
+      await api().set_muted(muted);
+      if (muted) { orb("muted"); liveWord("muted — I can't hear you"); }
+      else { orb("listening"); liveWord("listening"); }
+      livePills();
     }],
+    ["End", () => endLive()],
   ]);
 }
-async function capturePhrase(onDone) {
-  cards([]); caption("Say your phrase…");
-  const r = await listen(12);
-  if (!r.ok || !r.text) {
-    caption(r.error || "I didn't hear anything.", true);
-    return stepPhrase(onDone);
-  }
-  const phrase = r.text.trim();
-  await speakUI(`I heard: ${phrase}. Did I get it right?`);
-  cards([
-    ["Yes — that's it", () => verifyPhrase(phrase, 1, onDone), true],
-    ["No — try again", () => capturePhrase(onDone)],
-  ]);
-}
-async function verifyPhrase(phrase, round, onDone) {
-  cards([]);
-  caption(`Reliability check ${round} of 2 — say it again.`);
-  await speakUI(round === 1 ? "Say it once more." : "And one last time.");
-  const r = await listen(12);
-  if (!r.ok || norm(r.text) !== norm(phrase)) {
-    caption(`I heard “${(r.text || "—").trim()}” — that didn't match.`, true);
-    return cards([
-      ["Run the check again", () => verifyPhrase(phrase, round, onDone), true],
-      ["Pick a different phrase", () => capturePhrase(onDone)],
-    ]);
-  }
-  if (round < 2) return verifyPhrase(phrase, round + 1, onDone);
-  await api().save_phrase(phrase);
-  await speakUI("Locked in. That phrase stays between us.");
-  onDone();
-}
-
-async function stepDone() {
-  chip("done"); status("FINISHING");
-  caption("That's everything.");
-  cards([]);
-  orb("speaking");
-  await api().complete_setup();
-  home();
-}
-
-/* ---------- home ---------- */
-async function refreshMeter(s) {
-  s = s || await api().get_state();
-  $("meter").hidden = false;
-  $("meterText").textContent = `credits $${s.usage_usd.toFixed(2)} / $10.00`;
-  $("meterFill").style.width = Math.min(100, s.usage_usd * 10) + "%";
-}
-async function home() {
-  $("chips").hidden = true;
+async function goLive() {
+  liveOn = true; muted = false;
+  liveYou = liveOz = "";
+  $("keybox").hidden = true;
+  $("home").classList.remove("keying");
+  orb("connecting"); stat("connecting");
+  livePills();
   const s = await api().get_state();
-  orb("idle"); status("READY — TAP THE MIC");
-  caption("Tap the mic and talk to me.<br><small style='color:var(--dim)'>Wake word and hands are on the way.</small>");
-  cards([["🎙 Talk to me", () => talk(), true]]);
-  refreshMeter(s);
+  phase = s.setup_complete ? "live" : "setup";
+  renderLive();
+  const r = await api().start_live();
+  if (!r.ok) { liveOn = false; showFailed(r.error); }
 }
-async function talk() {
-  const r = await listen(12);
-  if (!r.ok || !r.text) {
-    caption(r.error || "I didn't catch that.", true);
-    status("READY — TAP THE MIC");
+function showFailed(msg) {
+  orb("idle"); stat("not connected"); fail(msg);
+  pills([["Try again", () => { fails = 0; goLive(); }]]);
+}
+async function endLive() {
+  liveOn = false;
+  await api().stop_live();
+  orb("idle"); stat("ended");
+  lines("", "I'm here when you need me.", true);
+  pills([["Start talking", () => { fails = 0; goLive(); }]]);
+}
+
+window.liveEvent = e => {
+  if (e.type === "setup") {
+    const said = { name: "name saved", voice: "voice set",
+                   phrase: "go-phrase set", done: "setup complete" }[e.step];
+    if (e.step === "done") phase = "live";
+    if (said) flash(said);
     return;
   }
-  caption(`<small style="color:var(--dim)">you</small> ${r.text}`);
-  orb("speaking"); status("THINKING");
-  const reply = await api().chat_reply(r.text);
-  if (!reply.ok) {
-    caption(reply.error, true); orb("idle"); status("READY — TAP THE MIC");
-    return;
+  if (!liveOn) return;
+  if (e.type === "state") {
+    fails = 0;
+    if (e.value === "listening") {
+      if (muted) { orb("muted"); liveWord("muted — I can't hear you"); }
+      else { orb("listening"); liveWord("listening"); }
+    } else if (e.value === "speaking") { orb("speaking"); liveWord("speaking"); }
+    else { orb("connecting"); stat("connecting"); }
+  } else if (e.type === "you") {
+    liveYou = e.text; renderLive();
+    if (mood === "listening" && performance.now() - lastPoke > 320) {
+      lastPoke = performance.now(); impulse(0.3);   // your voice stirs the dots
+    }
+  } else if (e.type === "oziel") { liveOz = e.text; renderLive(); }
+  else if (e.type === "turn") {
+    if (liveYou || liveOz) { lastYou = liveYou; lastOz = liveOz; }
+    liveYou = liveOz = ""; renderLive();
+  } else if (e.type === "interrupted") { impulse(1.1); }
+  else if (e.type === "notice") { flash(e.text, 2600); }
+  else if (e.type === "error") { liveOn = false; showFailed(e.text); }
+  else if (e.type === "closed") {
+    // dropped or voice-switch restart — reconnect quietly, give up after 3
+    if (fails++ < 3) { orb("connecting"); stat("reconnecting"); setTimeout(goLive, 600); }
+    else { liveOn = false; showFailed("Connection keeps dropping — check the network and try again."); }
   }
-  caption(`<small style="color:var(--dim)">you</small> ${r.text}<br><small style="color:var(--accent)">oziel</small> ${reply.text}`);
-  await speakUI(reply.text);
-  status("READY — TAP THE MIC");
-  refreshMeter();
-}
+};
 
 /* ---------- settings ---------- */
-$("gear").onclick = async () => {
+function opt(box, label, sub, on, fn) {
+  const b = document.createElement("button");
+  b.className = "opt" + (on ? " on" : "");
+  b.textContent = label;
+  if (sub) {
+    const s = document.createElement("span");
+    s.className = "sub"; s.textContent = sub; b.appendChild(s);
+  }
+  b.onclick = fn;
+  box.appendChild(b);
+}
+async function openSettings() {
   const s = await api().get_state();
   const v = $("setVoice"); v.innerHTML = "";
-  for (const [slug, name] of VOICES) {
-    const b = document.createElement("button");
-    b.className = "card" + (s.voice === slug ? " primary" : "");
-    b.textContent = name;
-    b.onclick = async () => { await api().choose_voice(slug); $("gear").onclick(); };
-    v.appendChild(b);
+  for (const [slug, sub] of VOICES) {
+    opt(v, slug, sub, s.voice === slug,
+        async () => { await api().choose_voice(slug); openSettings(); });
   }
   const vb = $("setVerbosity"); vb.innerHTML = "";
-  for (const level of ["brief", "chatty"]) {
-    const b = document.createElement("button");
-    b.className = "card" + (s.verbosity === level ? " primary" : "");
-    b.textContent = level;
-    b.onclick = async () => { await api().set_verbosity(level); $("gear").onclick(); };
-    vb.appendChild(b);
+  for (const [level, sub] of [["brief", "one sentence"], ["chatty", "two or three"]]) {
+    opt(vb, level, sub, s.verbosity === level,
+        async () => { await api().set_verbosity(level); openSettings(); });
+  }
+  const ec = $("setEcho"); ec.innerHTML = "";
+  for (const [label, sub, guard] of [
+    ["Earbuds", "interrupt me anytime", false],
+    ["Speakers", "I pause my ears while talking", true]]) {
+    opt(ec, label, sub, !!s.echo_guard === guard,
+        async () => { await api().set_echo_guard(guard); openSettings(); });
   }
   $("settings").classList.add("open");
-};
+}
+$("gear").onclick = openSettings;
 $("closeSettings").onclick = () => $("settings").classList.remove("open");
 $("resetSetup").onclick = async () => {
   await api().reset_setup();
   location.reload();
 };
-$("rerecordPhrase").onclick = () => {
-  $("settings").classList.remove("open");
-  stepPhrase(() => home());
-};
 
 /* ---------- boot ---------- */
 window.addEventListener("pywebviewready", async () => {
   const s = await api().get_state();
-  if (s.setup_complete) home();
-  else if (s.has_key) stepHear();
+  phase = s.setup_complete ? "live" : "setup";
+  if (s.has_key) goLive();
   else stepKey();
 });
 </script>

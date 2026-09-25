@@ -10,6 +10,7 @@ silence detector — records until the speaker stops. Realtime streaming
 STT replaces the record-then-send shape later; the mic handling stays.
 """
 import io
+import threading
 import wave
 
 import numpy as np
@@ -17,6 +18,22 @@ import sounddevice as sd
 import winsound
 
 SAMPLE_RATE = 16_000
+
+_cancel = threading.Event()
+
+
+def cancel_recording() -> None:
+    """Stop an in-flight record_until_silence at its next 0.1s block.
+
+    Lets a button tap interrupt voice listening without waiting out the
+    silence timer. Safe to call when nothing is recording.
+    """
+    _cancel.set()
+
+
+def was_canceled() -> bool:
+    """True if the last recording ended via cancel_recording()."""
+    return _cancel.is_set()
 
 
 def play_wav(wav_bytes: bytes) -> None:
@@ -33,13 +50,14 @@ def record_until_silence(
 
     Never blocks past max_seconds, so a silent room can't hang the UI.
     """
+    _cancel.clear()
     block = 0.1
     blocks: list[np.ndarray] = []
     heard = False
     silence = 0.0
     elapsed = 0.0
     with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32") as stream:
-        while elapsed < max_seconds:
+        while elapsed < max_seconds and not _cancel.is_set():
             data, _ = stream.read(int(SAMPLE_RATE * block))
             blocks.append(data.copy())
             elapsed += block
@@ -51,6 +69,8 @@ def record_until_silence(
                 silence += block
                 if silence >= trailing_silence:
                     break
+    if not blocks:  # canceled before the first block landed
+        blocks.append(np.zeros((1, 1), dtype="float32"))
     audio = np.concatenate(blocks)[:, 0]
     pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
     buf = io.BytesIO()

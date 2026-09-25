@@ -12,11 +12,14 @@ CONFIG_PATH = CONFIG_DIR / "config.json"
 
 DEFAULTS = {
     "user_name": None,        # what Oziel calls the owner
-    "api_key": None,          # TODO: encrypt with Windows DPAPI before any public release
-    "voice": "en_paul_confident",
+    "api_key": None,          # Mistral (dormant fallback provider)
+    "voice": "Charon",        # Gemini prebuilt voice — used by TTS and Live alike
     "confirm_phrase": None,   # captured by voice during setup; risky actions are
                               # fully blocked while this is None
     "verbosity": "brief",     # brief | chatty
+    "gemini_api_key": None,   # realtime voice loop; falls back to .env GEMINI_API_KEY
+    "echo_guard": False,      # True = mute mic while Oziel talks (laptop speakers);
+                              # False = full duplex with barge-in (earbuds)
     "setup_complete": False,
     "usage_month": None,      # e.g. "2026-08"
     "usage_usd": 0.0,
