@@ -222,9 +222,11 @@ const VOICES = [
 /* ============================================================
    the orb — a flat field of dots, the way the design draws it:
    an unordered dot matrix, densest in the middle, dissolving at
-   the rim. it never spins. at rest it breathes slowly. a shock
-   flings every dot along its own private line, mostly outward,
-   and one spring per dot pulls it home, so the disc re-forms.
+   the rim. it never spins. at rest it breathes slowly. when a
+   voice plays, the field follows it: loudness is how far dots
+   fly, pitch is where — low tones stir the core, high tones the
+   rim — and each syllable's attack lands as a burst. one spring
+   per dot pulls it home, so every pause shows the crisp field.
    ============================================================ */
 const cvs = $("orb"), ctx = cvs.getContext("2d");
 const SIZE = 300, R = 126, LV = 10;
@@ -255,6 +257,7 @@ for (let y = -R; y <= R; y += ROWP) {
       // flung outward, but every dot keeps its own angle: no clean ring
       fx: Math.cos(th) * 0.65 + Math.cos(a) * m,
       fy: Math.sin(th) * 0.65 + Math.sin(a) * m,
+      r: rr,                                      // where pitch finds it
       base: (1 - 0.62 * Math.pow(rr, 3)) * (0.74 + 0.26 * Math.random()),
       d: 0, v: 0,                                 // displacement + velocity
       sz: 1.5,
@@ -265,14 +268,16 @@ for (let y = -R; y <= R; y += ROWP) {
 }
 
 // gap = ms between shocks (0 = no shocks, only the breath), s = how hard
-// each lands, pu = how deep the slow pulse goes. speaking is paced so the
-// cycle reads: scatter, re-form, a beat of crisp field, again.
+// each lands, pu = how deep the slow pulse goes. listening and speaking
+// have no shocks of their own: the voice moves them (see voiceIn). the
+// gap there is only a fallback if voice frames stop arriving mid-reply.
 const MOOD = {
   idle:       { e: 0.06, b: 0.64, gap: 0,    s: 0,    pu: 0.055 },
   connecting: { e: 0.20, b: 0.62, gap: 1200, s: 0.45, pu: 0.050 },
-  listening:  { e: 0.34, b: 0.92, gap: 2200, s: 0.5,  pu: 0.045 },
-  speaking:   { e: 1.00, b: 1.00, gap: 950,  s: 1.8,  pu: 0.030 },
+  listening:  { e: 0.30, b: 0.92, gap: 0,    s: 0,    pu: 0.045 },
+  speaking:   { e: 0.70, b: 1.00, gap: 950,  s: 1.4,  pu: 0.030 },
   muted:      { e: 0.07, b: 0.44, gap: 0,    s: 0,    pu: 0.040 },
+  asleep:     { e: 0.05, b: 0.40, gap: 0,    s: 0,    pu: 0.065 },
   dim:        { e: 0.06, b: 0.50, gap: 0,    s: 0,    pu: 0.050 },
 };
 let mood = "idle", energy = 0.06, energyT = 0.06;
@@ -283,6 +288,31 @@ let lastFrame = 0, nextBurst = 0;
 function orb(state) {
   mood = MOOD[state] ? state : "idle";
   energyT = MOOD[mood].e; brightT = MOOD[mood].b; pulseT = MOOD[mood].pu;
+}
+
+// the voice, frame by frame (~30/s while Oziel talks, ~10/s from your mic)
+let vLevel = 0, vLevelT = 0, vBand = 0.5, vBandT = 0.5, vAt = 0, vPrev = 0;
+let fMean = 160, fVar = 900;           // this voice's pitch, learned as it talks
+function voiceIn(e) {
+  const oz = e.who === "oz";
+  vLevelT = Math.min(1, e.a * (oz ? 2.2 : 2.8));
+  if (e.f > 0) {
+    // the voice's own range, not a fixed one: deep Charon and bright Puck
+    // both sweep the whole disc
+    fMean += (e.f - fMean) * 0.04;
+    fVar += ((e.f - fMean) ** 2 - fVar) * 0.04;
+    const z = (e.f - fMean) / (2.2 * Math.sqrt(Math.max(fVar, 100)));
+    vBandT = Math.min(1, Math.max(0, 0.5 + z));
+  }
+  // a syllable's attack: the level jumps, the field takes a hit there
+  if (vLevelT - vPrev > 0.16) burst(vBandT, (oz ? 0.9 : 0.45) * vLevelT);
+  vPrev = vLevelT; vAt = performance.now();
+}
+function burst(band, strength) {
+  for (const p of dots) {
+    const w = Math.exp(-((p.r - (0.08 + 0.86 * band)) ** 2) / 0.05);
+    p.v += strength * (0.35 + 0.65 * w) * (0.5 + 0.5 * Math.random());
+  }
 }
 
 function impulse(strength) {
@@ -316,8 +346,16 @@ function frame(now) {
   pulseAmp += (pulseT - pulseAmp) * Math.min(1, dt * 2.0);
   accentAmt += ((mood === "listening" ? 1 : 0) - accentAmt) * Math.min(1, dt * 2.2);
 
+  // no fresh frame for 150ms = the voice paused: let the field settle
+  if (now - vAt > 150) vLevelT = 0;
+  vLevel += (vLevelT - vLevel) * Math.min(1, dt * (vLevelT > vLevel ? 18 : 7));
+  vBand += (vBandT - vBand) * Math.min(1, dt * 9);
+  const voiced = now - vAt < 400;
+  const ring = 0.08 + 0.86 * vBand;
+  const tint = mood === "listening" ? 1 : 0;
+
   const gap = MOOD[mood].gap;
-  if (gap && now > nextBurst) {
+  if (gap && !voiced && now > nextBurst) {
     impulse(MOOD[mood].s);
     nextBurst = now + gap * (0.7 + Math.random() * 0.6);
   }
@@ -329,7 +367,10 @@ function frame(now) {
   for (const b of buckets) for (const list of b) list.length = 0;
 
   for (const p of dots) {
-    // one spring per dot: the shock scatters, this brings it home
+    // the voice pushes hardest on the ring its pitch sits at
+    const w = Math.exp(-((p.r - ring) ** 2) / 0.03);
+    p.v += vLevel * (1.2 + 7.5 * w) * dt * 6;
+    // one spring per dot: the voice scatters, this brings it home
     p.v += -32 * p.d * dt;
     p.v *= Math.exp(-4.2 * dt);
     p.d += p.v * dt;
@@ -346,10 +387,12 @@ function frame(now) {
     const acc = ((p.tw + clock * 0.035) % 1) < 0.3 * accentAmt;
     // a dot thins out as it flies, so a burst reads as spray
     let a = p.base * twinkle * bright * glow * (1 - 0.8 * Math.max(0, p.d));
-    if (acc) a = Math.min(1, a * 1.3);
+    a *= 1 + 0.45 * vLevel * w;                    // the singing ring glows
+    const acc2 = acc || (tint && w * vLevel > 0.35);
+    if (acc2) a = Math.min(1, a * 1.3);
     if (a < 0.06) continue;
     const lv = Math.min(LV - 1, Math.max(0, Math.round(a * LV) - 1));
-    buckets[acc ? 1 : 0][lv].push(px, py, p.sz);
+    buckets[acc2 ? 1 : 0][lv].push(px, py, p.sz);
   }
 
   ctx.clearRect(0, 0, SIZE, SIZE);
@@ -428,9 +471,8 @@ async function stepKey() {
 }
 
 /* ---------- the live session (this IS the app) ---------- */
-let liveOn = false, muted = false, fails = 0, phase = "setup";
+let liveOn = false, fails = 0, phase = "setup";
 let liveYou = "", liveOz = "", lastYou = "", lastOz = "";
-let lastPoke = 0;
 
 function renderLive() {
   if (liveYou || liveOz) lines(liveYou, liveOz);
@@ -439,18 +481,25 @@ function renderLive() {
 function liveWord(word) { stat((phase === "setup" ? "setup · " : "live · ") + word); }
 function livePills() {
   pills([
-    [muted ? "Unmute" : "Mute", async () => {
-      muted = !muted;
-      await api().set_muted(muted);
-      if (muted) { orb("muted"); liveWord("muted — I can't hear you"); }
-      else { orb("listening"); liveWord("listening"); }
-      livePills();
-    }],
+    ["Mute", () => goSleep()],
     ["End", () => endLive()],
   ]);
 }
-async function goLive() {
-  liveOn = true; muted = false;
+// asleep: the socket is closed; only the local wake word listens
+function asleep(canWake) {
+  liveOn = false;
+  orb("asleep");
+  stat(canWake ? "asleep \u00b7 say \u201cOziel\u201d" : "asleep \u00b7 tap wake");
+  lines("", canWake ? "Say my name when you need me." : "Tap wake when you need me.", true);
+  pills([["Wake", () => { fails = 0; goLive("wake"); }], ["End", () => endLive()]]);
+}
+async function goSleep() {
+  liveOn = false;                     // the coming "closed" must not reconnect
+  const r = await api().sleep();
+  asleep(r.can_wake);
+}
+async function goLive(reason) {
+  liveOn = true;
   liveYou = liveOz = "";
   $("keybox").hidden = true;
   $("home").classList.remove("keying");
@@ -459,7 +508,7 @@ async function goLive() {
   const s = await api().get_state();
   phase = s.setup_complete ? "live" : "setup";
   renderLive();
-  const r = await api().start_live();
+  const r = await api().start_live(reason || null);
   if (!r.ok) { liveOn = false; showFailed(r.error); }
 }
 function showFailed(msg) {
@@ -475,26 +524,24 @@ async function endLive() {
 }
 
 window.liveEvent = e => {
+  if (e.type === "wake") { fails = 0; goLive("wake"); return; }
   if (e.type === "setup") {
-    const said = { name: "name saved", voice: "voice set",
-                   phrase: "go-phrase set", done: "setup complete" }[e.step];
+    const said = { name: "name saved", voice: "voice set", phrase: "go-phrase set",
+                   wake: "wake word learned", done: "setup complete" }[e.step];
     if (e.step === "done") phase = "live";
     if (said) flash(said);
     return;
   }
   if (!liveOn) return;
+  if (e.type === "voice") { if (mood === "listening" || mood === "speaking") voiceIn(e); return; }
+  if (e.type === "sleep") { asleep(e.can_wake); return; }
   if (e.type === "state") {
     fails = 0;
-    if (e.value === "listening") {
-      if (muted) { orb("muted"); liveWord("muted — I can't hear you"); }
-      else { orb("listening"); liveWord("listening"); }
-    } else if (e.value === "speaking") { orb("speaking"); liveWord("speaking"); }
+    if (e.value === "listening") { orb("listening"); liveWord("listening"); }
+    else if (e.value === "speaking") { orb("speaking"); liveWord("speaking"); }
     else { orb("connecting"); stat("connecting"); }
   } else if (e.type === "you") {
     liveYou = e.text; renderLive();
-    if (mood === "listening" && performance.now() - lastPoke > 320) {
-      lastPoke = performance.now(); impulse(0.3);   // your voice stirs the dots
-    }
   } else if (e.type === "oziel") { liveOz = e.text; renderLive(); }
   else if (e.type === "turn") {
     if (liveYou || liveOz) { lastYou = liveYou; lastOz = liveOz; }
@@ -553,8 +600,9 @@ $("resetSetup").onclick = async () => {
 window.addEventListener("pywebviewready", async () => {
   const s = await api().get_state();
   phase = s.setup_complete ? "live" : "setup";
-  if (s.has_key) goLive();
-  else stepKey();
+  if (!s.has_key) stepKey();
+  else if (s.setup_complete && s.wake_enrolled) goSleep();
+  else goLive();
 });
 </script>
 </body>

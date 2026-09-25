@@ -12,13 +12,15 @@ through window.evaluate_js.
 """
 import json
 import queue
+import re
 import threading
 import time
 from pathlib import Path
 
 import webview
+import winsound
 
-from oziel import config
+from oziel import audio, config, wake
 from oziel.live import LiveSession
 from oziel.providers.gemini import GeminiProvider
 
@@ -30,16 +32,48 @@ VOICES = {
     "Kore": "firm and clear",
 }
 
-# who Oziel is when asked: the prompt used to say "Windows laptop" and
-# nothing about origin, so the model filled the gap with Microsoft
-ORIGIN = (
-    "If asked who made you: your owner built you as a personal project, "
-    "hand-written code on this laptop. Your voice and reasoning run on "
-    "Google's Gemini live model. Microsoft only makes the Windows this "
-    "laptop runs — never say Microsoft, or any company, built you. "
-)
+# who Oziel is. Both prompts carry it: the setup prompt once had none, and
+# the model filled "who made you?" with whatever the word Windows suggested.
+# Name no company as a maker — even a "never say X" plants X.
+def _origin(owner: str | None) -> str:
+    who = owner or "your owner"
+    return (
+        f"Who you are: {who} built you — hand-written code, a personal project "
+        f"running on {who}'s own laptop. Your voice and reasoning come from "
+        "Google's Gemini live model; everything else is theirs. If asked who "
+        f"made you, say {who} built you. "
+    )
+
+
+SLEEP_TOOL = {
+    "name": "sleep",
+    "description": (
+        "The owner wants you to stop listening — 'mute', 'go to sleep', "
+        "'stop listening', 'that's all', 'goodbye'. Call it, then say one or "
+        "two words ('Sleeping.'). Your mic closes as you finish; saying your "
+        "name wakes you."
+    ),
+    "parameters": {"type": "OBJECT", "properties": {}},
+}
+WAKE_TOOL = {
+    "name": "learn_wake_word",
+    "description": (
+        "Learn to hear your name in the owner's voice. First tell them: after "
+        "each of three chimes, say 'Oziel'. Then call this; it plays the chimes "
+        "and records the takes itself, and returns whether it worked."
+    ),
+    "parameters": {"type": "OBJECT", "properties": {}},
+}
+AWAKE_TOOLS = [SLEEP_TOOL, WAKE_TOOL]
+# said by the owner, these put Oziel to sleep even if the model never calls
+# the tool — the words are the command, the tool is only the fast path
+SLEEP_WORDS = re.compile(
+    r"\b(go(ing)? (back )?to sleep|stop listening|mute( yourself)?|"
+    r"good ?night|sleep now)\b", re.I)
+IDLE_SLEEP = 120  # seconds of quiet before Oziel sleeps (only once it can wake)
 
 SETUP_TOOLS = [
+    SLEEP_TOOL,
     {
         "name": "save_name",
         "description": (
@@ -80,6 +114,7 @@ SETUP_TOOLS = [
             "required": ["phrase"],
         },
     },
+    WAKE_TOOL,
     {
         "name": "finish_setup",
         "description": "Mark first-run setup complete. Call once every step is done or skipped.",
@@ -96,6 +131,7 @@ class Api:
         self._live: LiveSession | None = None
         self._window = None  # set by run() before webview.start()
         self._muted = False
+        self._wake = wake.WakeListener(self._on_wake_heard)
         # live events -> UI on a dedicated thread. evaluate_js is a blocking
         # round-trip into WebView2 (tens of ms); calling it from the live
         # session's asyncio loop stalled the mic uploader and dropped audio.
@@ -115,6 +151,9 @@ class Api:
             "has_phrase": bool(self.cfg["confirm_phrase"]),
             "echo_guard": bool(self.cfg.get("echo_guard")),
             "muted": self._muted,
+            "wake_enrolled": wake.enrolled(),
+            # this session's mic uplink — for the usage sheet
+            "uplink_mb": round(self._live.sent_bytes / 1e6, 2) if self._live else 0.0,
         }
 
     # ---- key ----
@@ -161,24 +200,30 @@ class Api:
                  else "two or three warm sentences")
         if self.cfg["setup_complete"]:
             system = (
-                f"You are Oziel, a realtime voice assistant on the Windows laptop "
+                f"You are Oziel, a realtime voice assistant on the laptop "
                 f"of {name or 'your owner'}. Ozi means errand in Igbo. "
                 f"Replies are spoken: {style}, plain text. "
-                + ORIGIN +
+                + _origin(name) +
                 "You cannot take actions yet — your hands arrive in a coming "
-                "build; be honest and lighthearted about that if asked."
+                "build; be honest and lighthearted about that if asked. "
+                "When they tell you to mute, sleep or stop listening, call "
+                "sleep. You wake when they say your name. If you mishear your "
+                "name often, offer to relearn it with learn_wake_word."
             )
-            return system, None, None
+            return system, AWAKE_TOOLS, None
         voices = "; ".join(f"{v} ({d})" for v, d in VOICES.items())
         done = []
         if name:
             done.append(f"name already saved: {name}")
         if self.cfg["confirm_phrase"]:
             done.append("go-phrase already saved")
+        if wake.enrolled():
+            done.append("wake word already learned")
         system = (
             "You are Oziel, a brand-new voice assistant being set up on your "
-            "owner's Windows laptop. Ozi means errand in Igbo. This is a live "
+            "owner's laptop. Ozi means errand in Igbo. This is a live "
             "voice conversation. Speak in short, warm sentences — one or two.\n"
+            + _origin(name) + "\n"
             "Conduct first-run setup, one step at a time, skipping any step "
             "already done:\n"
             "1. Greet and make sure they can hear you clearly.\n"
@@ -194,8 +239,14 @@ class Api:
             "them say one they'd never say by accident, then have them repeat "
             "it; if both match, call save_phrase with the exact phrase. They "
             "may skip; actions stay locked until it's set.\n"
-            "5. Call finish_setup, then tell them: just talk anytime; your "
-            "hands — real actions — arrive in a coming build.\n"
+            "5. Your name: explain that you sleep when told to — 'go to sleep' "
+            "or 'mute' — and wake when they say 'Oziel', so you need to learn "
+            "their voice saying it. Tell them: after each of three chimes, say "
+            "'Oziel'. Then call learn_wake_word. If it fails, tell them why "
+            "and offer one retry; they may skip.\n"
+            "6. Call finish_setup, then tell them: just talk anytime, say 'go "
+            "to sleep' to rest me and 'Oziel' to wake me; your hands — real "
+            "actions — arrive in a coming build.\n"
             "Never call a tool for something the owner hasn't confirmed."
             + (" Already done: " + "; ".join(done) + "." if done else "")
         )
@@ -203,16 +254,22 @@ class Api:
                    "hear you clearly.")
         return system, SETUP_TOOLS, kickoff
 
-    def start_live(self) -> dict:
+    def start_live(self, reason: str | None = None) -> dict:
         key = self._gemini_key()
         if not key:
             return {"ok": False, "error": "No Gemini key found — add GEMINI_API_KEY to .env."}
+        self._wake.stop()  # hand the mic back to the live session
         if self._live and self._live.running:
             self._live.stop()
         system, tools, kickoff = self._system_prompt()
+        if reason == "wake":
+            kickoff = ("Your owner just said your name to wake you. Answer in "
+                       "two or three words, like 'Yes?' or 'I'm here.'")
+        awake = self.cfg["setup_complete"] and wake.enrolled()
         self._muted = False
         self._live = LiveSession(
-            key, system, self._push_live,
+            key, system, self._on_live_event,
+            idle_sleep=IDLE_SLEEP if awake else None,
             echo_guard=bool(self.cfg.get("echo_guard")),
             voice=self.cfg.get("voice"),
             tools=tools,
@@ -223,9 +280,58 @@ class Api:
         return {"ok": True}
 
     def stop_live(self) -> dict:
+        self._wake.stop()
         if self._live:
             self._live.stop()
         return {"ok": True}
+
+    def sleep(self) -> dict:
+        """Close the socket and listen locally for "Oziel" (the Mute button)."""
+        if self._live:
+            self._live.stop()
+            self._live.join(3.0)
+        return {"ok": True, "can_wake": self._wake.start()}
+
+    def _on_live_event(self, evt: dict) -> None:
+        if (evt.get("type") == "you" and self._live
+                and SLEEP_WORDS.search(evt.get("text", ""))):
+            self._live.sleep_after_turn()  # after Oziel's reply, however short
+        if evt.get("type") == "sleep":
+            # Oziel put itself to sleep (asked, or idle): once the session has
+            # let go of the mic, the wake listener takes it
+            evt["can_wake"] = wake.enrolled()
+            def _handoff(live=self._live):
+                if live:
+                    live.join(3.0)
+                self._wake.start()
+            threading.Thread(target=_handoff, daemon=True).start()
+        self._push_live(evt)
+
+    def _on_wake_heard(self) -> None:
+        self._push_live({"type": "wake"})
+
+    def _learn_wake(self) -> dict:
+        """Three chimes, three takes of "Oziel", recorded here on the laptop —
+        the takes never go up the socket (upload is muted meanwhile)."""
+        live = self._live
+        if live:
+            live.wait_quiet(10)
+            live.set_muted(True)
+        try:
+            takes = []
+            for i in range(3):
+                self._push_live({"type": "notice", "text": f"say \u201cOziel\u201d \u00b7 {i + 1} of 3"})
+                winsound.Beep(880, 140)
+                wav = audio.record_until_silence(max_seconds=3.0, trailing_silence=0.5)
+                takes.append(wake.wav_to_pcm(wav))
+            ok, info = wake.enroll(takes)
+        finally:
+            if live:
+                live.set_muted(self._muted)
+        if ok:
+            self._push_live({"type": "setup", "step": "wake"})
+            return {"ok": True, "note": info}
+        return {"ok": False, "error": info}
 
     def shutdown(self, *_):
         """Window closed: end the session and wait for its thread, so the
@@ -233,6 +339,7 @@ class Api:
         if self._live:
             self._live.stop()
             self._live.join(3.0)
+        self._wake.stop()
         self._ui_q.put(None)
 
     def set_muted(self, muted: bool) -> dict:
@@ -251,6 +358,12 @@ class Api:
         threading.Thread(target=_later, daemon=True).start()
 
     def _on_tool(self, name: str, args: dict) -> dict:
+        if name == "sleep":
+            if self._live:
+                self._live.sleep_after_turn()
+            return {"ok": True, "note": "say one or two words; the mic closes as you finish"}
+        if name == "learn_wake_word":
+            return self._learn_wake()
         if name == "save_name":
             owner = str(args.get("name", "")).strip()
             if not owner or owner.lower().strip(".!") == "oziel":
@@ -285,6 +398,10 @@ class Api:
             self.cfg["setup_complete"] = True
             config.save(self.cfg)
             self._push_live({"type": "setup", "step": "done"})
+            # this session still carries the setup prompt; after the closing
+            # words, sleep — the owner's "Oziel" opens a fresh, post-setup one
+            if self._live and wake.enrolled():
+                self._live.sleep_after_turn()
             return {"ok": True}
         return {"ok": False, "error": f"unknown tool {name!r}"}
 
@@ -295,7 +412,7 @@ class Api:
     def _drain_ui(self) -> None:
         """One evaluate_js per burst: batch what is waiting, and keep only the
         newest of each streaming event so a slow webview never backs up."""
-        newest_only = ("you", "oziel", "state")
+        newest_only = ("you", "oziel", "state", "voice")
         while True:
             evt = self._ui_q.get()
             done = evt is None
@@ -350,8 +467,10 @@ class Api:
         """Wipe everything and start over — powers the Reset button in settings."""
         if self._live:
             self._live.stop()
+        self._wake.stop()
         self.cfg = dict(config.DEFAULTS)
         config.save(self.cfg)
+        wake.TEMPLATES.unlink(missing_ok=True)
         self.provider = None
         return {"ok": True}
 

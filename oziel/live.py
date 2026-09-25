@@ -17,7 +17,10 @@ import base64
 import json
 import sys
 import threading
+import time
+from collections import deque
 
+import numpy as np
 import sounddevice as sd
 import websockets
 
@@ -29,6 +32,17 @@ WS_URL = (
 IN_RATE, OUT_RATE = 16_000, 24_000
 BLOCK = 1_600  # 100ms of 16kHz mono int16
 
+# local speech gate: silence never leaves the laptop (it was ~156 MB/hour of
+# uplink on cellular, and a backed-up queue dropped real speech with it)
+GATE_FLOOR = 0.012 * 32768  # RMS a chunk must beat to count as speech
+GATE_OVER_NOISE = 3.0       # ...or this many times the room's noise floor
+PRE_ROLL = 3                # chunks (300ms) replayed so first syllables land
+HANGOVER = 7                # chunks (700ms) kept after speech so the server's
+                            # VAD still hears the pause that ends the turn
+COALESCE = 5                # a stalled link sends up to 500ms per message
+VOICE_WIN = 1_024           # samples per orb voice frame (~43ms at 24k)
+VOICE_HZ = 30               # orb voice frames per second while Oziel talks
+
 
 class _Player:
     """24kHz int16 playback fed in chunks; clear() is the barge-in."""
@@ -36,6 +50,7 @@ class _Player:
     def __init__(self):
         self.buf = bytearray()
         self.lock = threading.Lock()
+        self.recent = np.zeros(VOICE_WIN, np.int16)  # last ~43ms sent to the speaker
         self.stream = sd.RawOutputStream(
             samplerate=OUT_RATE, channels=1, dtype="int16", callback=self._cb
         )
@@ -47,6 +62,9 @@ class _Player:
             del self.buf[: len(chunk)]
         outdata[: len(chunk)] = chunk
         outdata[len(chunk):] = b"\x00" * (need - len(chunk))
+        played = np.frombuffer(bytes(outdata), np.int16)
+        with self.lock:
+            self.recent = np.concatenate([self.recent, played])[-VOICE_WIN:]
 
     def feed(self, pcm: bytes):
         with self.lock:
@@ -60,12 +78,34 @@ class _Player:
         with self.lock:
             return len(self.buf)
 
+    def playing(self) -> np.ndarray:
+        with self.lock:
+            return self.recent.copy()
+
+
+def voice_frame(pcm: np.ndarray, rate: int) -> tuple[float, float]:
+    """(loudness 0..1, pitch Hz or 0) of one short slice — what the orb moves to.
+    Pitch is plain autocorrelation over 70–400 Hz; unvoiced slices report 0."""
+    x = pcm.astype(np.float32) / 32768
+    rms = float(np.sqrt(np.mean(x * x))) if len(x) else 0.0
+    if rms < 0.004:
+        return 0.0, 0.0
+    x = x - x.mean()
+    n = len(x)
+    spec = np.fft.rfft(x, 2 * n)
+    r = np.fft.irfft(spec * np.conj(spec))[:n]
+    lo, hi = rate // 400, min(n - 1, rate // 70)
+    k = lo + int(np.argmax(r[lo:hi]))
+    f0 = rate / k if r[0] > 0 and r[k] / r[0] > 0.35 else 0.0
+    return min(1.0, rms * 5), round(f0, 1)
+
 
 class LiveSession:
     def __init__(self, api_key: str, system: str, on_event,
                  echo_guard: bool = False, model: str = MODEL,
                  voice: str | None = None, tools: list | None = None,
-                 on_tool=None, kickoff: str | None = None):
+                 on_tool=None, kickoff: str | None = None,
+                 idle_sleep: float | None = None):
         self._key = api_key
         self._system = system
         self._emit = on_event
@@ -79,6 +119,26 @@ class LiveSession:
         self._muted = threading.Event()
         self._thread: threading.Thread | None = None
         self.dropped = 0  # mic chunks discarded because upload stalled
+        self.sent_bytes = 0  # uplink payload, for the usage meter
+        self._idle_sleep = idle_sleep  # seconds of quiet before Oziel sleeps
+        self._sleep_req = threading.Event()  # finish this turn, then sleep
+        self._player: _Player | None = None
+
+    def sleep_after_turn(self):
+        """Voice mute: let Oziel finish its short goodbye, then close."""
+        self._sleep_req.set()
+
+    def wait_quiet(self, timeout: float = 8.0):
+        """Block (any thread) until Oziel's current reply has finished playing."""
+        end = time.monotonic() + timeout
+        time.sleep(0.4)  # the reply may still be arriving
+        while time.monotonic() < end:
+            p = self._player
+            if p is None or p.pending() == 0:
+                time.sleep(0.3)
+                if p is None or p.pending() == 0:
+                    return
+            time.sleep(0.1)
 
     def join(self, timeout: float = 3.0):
         """Wait for the session thread — call before interpreter shutdown so
@@ -116,7 +176,10 @@ class LiveSession:
         loop = asyncio.get_running_loop()
         mic_q: asyncio.Queue[bytes] = asyncio.Queue(maxsize=50)
         player = _Player()
+        self._player = player
         speaking = False
+        last_active = loop.time()
+        turn_done = asyncio.Event()  # a reply finished since sleep was asked
 
         def _enqueue(pcm: bytes):
             # runs on the loop thread; if upload has stalled, drop the OLDEST
@@ -181,24 +244,68 @@ class LiveSession:
             you, oziel = "", ""
 
             async def sender():
+                nonlocal last_active
+                pre = deque(maxlen=PRE_ROLL)
+                noise, hang, open_ = GATE_FLOOR / GATE_OVER_NOISE, 0, False
+
+                async def send(payload: dict):
+                    msg = json.dumps({"realtimeInput": payload})
+                    self.sent_bytes += len(msg)
+                    await ws.send(msg)
+
                 while not self._stop_req.is_set():
                     try:
-                        chunk = await asyncio.wait_for(mic_q.get(), timeout=0.2)
+                        chunks = [await asyncio.wait_for(mic_q.get(), timeout=0.2)]
                     except asyncio.TimeoutError:
                         continue
-                    if self._muted.is_set():
+                    while len(chunks) < COALESCE and not mic_q.empty():
+                        chunks.append(mic_q.get_nowait())
+                    if self._muted.is_set() or (
+                            self._echo_guard and player.pending() > 0):
+                        # muted, or speakers mode keeping Oziel from hearing
+                        # itself: nothing goes up, and the gate starts fresh
+                        pre.clear()
+                        hang = 0
                         continue
-                    if self._echo_guard and player.pending() > 0:
-                        continue  # speakers mode: don't let Oziel hear itself
-                    await ws.send(json.dumps({"realtimeInput": {"audio": {
-                        "data": base64.b64encode(chunk).decode(),
-                        "mimeType": f"audio/pcm;rate={IN_RATE}",
-                    }}}))
+                    out = []
+                    for c in chunks:
+                        rms = float(np.sqrt(np.mean(
+                            np.square(np.frombuffer(c, np.int16).astype(np.float32)))))
+                        # room floor: falls to any quieter chunk at once, rises
+                        # slowly — a steady fan is learned in seconds, speech
+                        # (which keeps pausing) never is
+                        noise = rms if rms < noise else noise + 0.01 * (rms - noise)
+                        if rms > max(GATE_FLOOR, noise * GATE_OVER_NOISE):
+                            if not open_:
+                                out.extend(pre)  # the syllable before the trigger
+                                pre.clear()
+                                open_ = True
+                            hang = HANGOVER
+                            out.append(c)
+                        elif hang > 0:
+                            hang -= 1
+                            out.append(c)
+                        else:
+                            pre.append(c)
+                    if out:
+                        last_active = loop.time()
+                        a, f0 = voice_frame(np.frombuffer(out[-1], np.int16), IN_RATE)
+                        self._emit({"type": "voice", "who": "you", "a": a, "f": f0})
+                        await send({"audio": {
+                            "data": base64.b64encode(b"".join(out)).decode(),
+                            "mimeType": f"audio/pcm;rate={IN_RATE}",
+                        }})
+                    if open_ and hang == 0:
+                        self._emit({"type": "voice", "who": "you", "a": 0, "f": 0})
+                        # tell the server the stream paused, so its VAD
+                        # closes the turn instead of waiting for more audio
+                        open_ = False
+                        await send({"audioStreamEnd": True})
                 mic.stop()  # stop capturing before the close handshake
                 await ws.close()
 
             async def receiver():
-                nonlocal you, oziel, speaking
+                nonlocal you, oziel, speaking, last_active
                 async for raw in ws:
                     msg = json.loads(raw)
                     sc = msg.get("serverContent") or {}
@@ -218,7 +325,11 @@ class LiveSession:
                     if sc.get("outputTranscription"):
                         oziel += sc["outputTranscription"].get("text", "")
                         self._emit({"type": "oziel", "text": oziel.strip()})
+                    if sc or "toolCall" in msg:
+                        last_active = loop.time()
                     if sc.get("turnComplete"):
+                        if self._sleep_req.is_set():
+                            turn_done.set()
                         self._emit({"type": "turn"})
                         you, oziel = "", ""
                     if "toolCall" in msg and self._on_tool:
@@ -243,8 +354,28 @@ class LiveSession:
                 # surface upload stalls so a slow link is visible on screen
                 nonlocal speaking
                 seen_drops, last_warn = 0, 0.0
+                asked = None  # loop time sleep was requested
+                lag = player.stream.latency  # speaker delay: frames land on time
                 while not self._stop_req.is_set():
-                    await asyncio.sleep(0.15)
+                    await asyncio.sleep(1 / VOICE_HZ)
+                    if speaking:
+                        a, f0 = voice_frame(player.playing(), OUT_RATE)
+                        loop.call_later(lag, self._emit,
+                                        {"type": "voice", "who": "oz", "a": a, "f": f0})
+                    if self._sleep_req.is_set():
+                        now = loop.time()
+                        asked = asked or now
+                        # goodbye spoken and played out; the long fallback only
+                        # covers a turn that never completes
+                        if (turn_done.is_set() and player.pending() == 0) or now - asked > 20:
+                            self._emit({"type": "sleep", "why": "asked"})
+                            self._stop_req.set()
+                            break
+                    elif (self._idle_sleep and not speaking
+                          and loop.time() - last_active > self._idle_sleep):
+                        self._emit({"type": "sleep", "why": "idle"})
+                        self._stop_req.set()
+                        break
                     if speaking and player.pending() == 0:
                         speaking = False
                         self._emit({"type": "state", "value": "listening"})
@@ -266,6 +397,8 @@ class LiveSession:
                 mic.close()
                 player.stream.stop()
                 player.stream.close()
+                print(f"[live] uplink: {self.sent_bytes / 1e6:.2f} MB",
+                      file=sys.stderr)
                 if self.dropped:
                     print(f"[live] upload stalled: {self.dropped} mic chunks "
                           f"({self.dropped / 10:.1f}s) dropped", file=sys.stderr)
